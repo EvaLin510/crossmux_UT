@@ -109,3 +109,26 @@ def sdmmc(s):
            "      digitalWrite(sdPwr, sdOnHigh ? HIGH : LOW);\n")
     return s.replace(old, new, 1)
 edit("freeink-sdk/libs/hardware/SDCardManager/src/SdmmcBlockDevice.cpp", sdmmc)
+
+# 5) Diagnostics (UT37 bring-up): when the SD mount fails at boot, wait for a USB serial
+#    host (<=6 s), report the SD-power gate state, and retry once so the [SD] lines are
+#    visible to the web flasher's serial monitor.
+def maindiag(s):
+    if "UT37 diag" in s:
+        return s
+    old = '    LOG_ERR("MAIN", "SD card initialization failed");\n'
+    need(s, old, "src/main.cpp")
+    new = old + (
+        '#if FREEINK_DEVICE_UT37\n'
+        '    {  // UT37 diag: capture SD failure details over USB CDC\n'
+        '      const unsigned long diagStart = millis();\n'
+        '      while (!Serial && millis() - diagStart < 6000) delay(10);\n'
+        '      delay(300);\n'
+        '      Serial.printf("[UT37] SD gate GPIO%d level=%d (powerActiveHigh=%d)\\n", (int)BoardConfig::ACTIVE.sd.powerEnable,\n'
+        '                    digitalRead(BoardConfig::ACTIVE.sd.powerEnable), (int)BoardConfig::ACTIVE.sd.powerActiveHigh);\n'
+        '      const bool retryOk = Storage.begin();\n'
+        '      Serial.printf("[UT37] SD retry %s\\n", retryOk ? "OK" : "FAILED");\n'
+        '    }\n'
+        '#endif\n')
+    return s.replace(old, new, 1)
+edit("src/main.cpp", maindiag)
