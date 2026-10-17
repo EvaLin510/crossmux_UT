@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>UT37 Diagnostic Panel</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background-color: #121212; color: #e0e0e0; }
+        .card { background: #1e1e1e; border: 1px solid #333; padding: 15px; margin-bottom: 20px; border-radius: 6px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #444; padding: 10px; text-align: left; }
+        th { background-color: #2a2a2a; }
+        .pass { color: #4caf50; font-weight: bold; }
+        .fail { color: #f44336; font-weight: bold; }
+        .btn { background: #007acc; color: white; border: none; padding: 8px 16px; cursor: pointer; border-radius: 4px; }
+        .btn:hover { background: #005999; }
+        #console { background: #000; color: #00ff00; padding: 10px; height: 180px; overflow-y: auto; font-family: monospace; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h2>UT37 Hardware & Software Diagnostic Panel</h2>
+    <div class="card">
+        <button class="btn" onclick="runDiagnostics()">執行全套自我檢測</button>
+        <table>
+            <thead>
+                <tr>
+                    <th>測試項目</th>
+                    <th>結果</th>
+                    <th>詳細訊息</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>I2C 周邊通訊</td><td id="st-i2c">-</td><td id="msg-i2c">-</td></tr>
+                <tr><td>GPIO 狀態</td><td id="st-gpio">-</td><td id="msg-gpio">-</td></tr>
+                <tr><td>Flash 檔案系統</td><td id="st-storage">-</td><td id="msg-storage">-</td></tr>
+                <tr><td>系統記憶體 (Heap)</td><td id="st-sys">-</td><td id="msg-sys">-</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="card">
+        <h3>即時測試 Log 輸出</h3>
+        <div id="console">點擊「執行全套自我檢測」開始驗證...</div>
+    </div>
+    <script>
+        function printLog(msg) {
+            const consoleBox = document.getElementById('console');
+            consoleBox.innerText += `\n[${new Date().toLocaleTimeString()}] ${msg}`;
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+        }
+        async function runDiagnostics() {
+            printLog("發送診斷請求至 /api/ut/run_all...");
+            try {
+                const response = await fetch('/api/ut/run_all');
+                const data = await response.json();
+                updateItem('i2c', data.i2c);
+                updateItem('gpio', data.gpio);
+                updateItem('storage', data.storage);
+                updateItem('sys', data.sys);
+                printLog("自我檢測完成！");
+            } catch (err) {
+                printLog("錯誤：無法取得診斷資料 - " + err);
+            }
+        }
+        function updateItem(key, result) {
+            const statusElem = document.getElementById(`st-${key}`);
+            const msgElem = document.getElementById(`msg-${key}`);
+            if (result.pass) {
+                statusElem.innerHTML = '<span class="pass">PASS</span>';
+            } else {
+                statusElem.innerHTML = '<span class="fail">FAIL</span>';
+            }
+            msgElem.innerText = result.detail;
+            printLog(`[${key.toUpperCase()}] ${result.pass ? 'PASS' : 'FAIL'} - ${result.detail}`);
+        }
+    </script>
+</body>
+</html>
