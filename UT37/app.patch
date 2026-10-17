@@ -1,0 +1,51 @@
+diff --git a/platformio.ini b/platformio.ini
+index 2663f92..e30dd54 100644
+--- a/platformio.ini
++++ b/platformio.ini
+@@ -752,3 +752,33 @@ build_flags =
+   ${papermono_hardware.build_flags}
+   ${s3_nightly.build_flags}
+   -DCROSSPOINT_VERSION=\"${crosspoint.version}-papermono-rc+${sysenv.CROSSPOINT_RC_HASH}\"
++
++; --- UT37 — 3.7" 240x416 UC8253, ESP32-S3R8 (16MB flash / 8MB OPI PSRAM) ------
++; Murphy-family variant (UC8253 driver) with its own BoardConfig profile.
++; Pins: ut37/PINS.md. Touch/RTC/AHT30 are added in later stages.
++[ut37_hardware]
++extends = base
++board = esp32-s3-devkitc1-n16r8
++board_build.mcu = esp32s3
++board_build.arduino.memory_type = dio_opi
++lib_deps = ${s3_ble_psram.lib_deps}
++extra_scripts = ${s3_ble_psram.extra_scripts}
++build_flags =
++  ${base.build_flags}
++  ${s3_ble_psram.build_flags}
++  -DFREEINK_DEVICE_MURPHY=1
++  -DFREEINK_DEVICE_UT37=1
++  -DFREEINK_CAP_AUDIO=0
++  -DFREEINK_CAP_TOUCH=0
++  -DFREEINK_SD_SDMMC=1
++  -DBOARD_HAS_PSRAM
++  -DUSB_PRODUCT=\"UT37-CrossMux\"
++  -DUSB_MANUFACTURER=\"CrossMux\"
++  -DUSE_BLOCK_DEVICE_INTERFACE=1
++
++[env:ut37]
++extends = ut37_hardware
++build_flags =
++  ${ut37_hardware.build_flags}
++  -DENABLE_SERIAL_LOG
++  -DLOG_LEVEL=2
+diff --git a/src/network/FirmwareBoardTag.cpp b/src/network/FirmwareBoardTag.cpp
+index 2530b08..0006c10 100644
+--- a/src/network/FirmwareBoardTag.cpp
++++ b/src/network/FirmwareBoardTag.cpp
+@@ -24,6 +24,8 @@
+ #define CROSSPOINT_BOARD_NAME "lilygo"
+ #elif FREEINK_DEVICE_M5
+ #define CROSSPOINT_BOARD_NAME "m5"
++#elif FREEINK_DEVICE_UT37
++#define CROSSPOINT_BOARD_NAME "ut37"
+ #elif FREEINK_DEVICE_MURPHY_M4
+ #define CROSSPOINT_BOARD_NAME "murphy_m4"
+ #elif FREEINK_DEVICE_MURPHY
