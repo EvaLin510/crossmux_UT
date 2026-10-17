@@ -51,7 +51,8 @@ constexpr BoardProfile UT37 = {
     240,
     {4, 5, 3, 2, 0, 1, PIN_UNASSIGNED},  // sclk, mosi, cs, dc, rst, busy
     0,
-    {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, false, 0},
+    // GPIO42 (TOUCH_WAKE/SD_WAKE) -> R4 -> Q1 gate: Q1 grounds the SD card (SD_GND). Active-HIGH.
+    {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, 42, false, 0, true},
     // back, confirm, left, right, up, down, power, powerActiveHigh
     // SIDEKEY=GPIO17 (RTC, wakes from deep sleep) -> power; SIDEKEY1=GPIO46 -> up/function.
     {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, 46, PIN_UNASSIGNED, 17, false},
@@ -91,3 +92,20 @@ def sdk(s):
     s = s.replace(old, "#if FREEINK_DEVICE_UT37\n    case Board::Ut37:\n      ACTIVE = UT37;\n      break;\n#endif\n" + old, 1)
     return s
 edit("freeink-sdk/libs/hardware/BoardConfig/include/BoardConfig.h", sdk)
+
+# 4) SDMMC mount: honour sd.powerActiveHigh (the stock sequence assumes an active-LOW gate)
+def sdmmc(s):
+    if "ACTIVE.sd.powerActiveHigh" in s:
+        return s
+    old = ("      digitalWrite(sdPwr, HIGH);\n"
+           "      delay(80);\n"
+           "      digitalWrite(sdPwr, LOW);  // run with the enable held LOW\n")
+    need(s, old, "SdmmcBlockDevice.cpp")
+    new = ("      // Polarity-aware power cycle: OFF level, wait, then ON level (held while running).\n"
+           "      // Active-LOW boards (X4 Pro/X4C) behave exactly as before: HIGH -> LOW.\n"
+           "      const bool sdOnHigh = BoardConfig::ACTIVE.sd.powerActiveHigh;\n"
+           "      digitalWrite(sdPwr, sdOnHigh ? LOW : HIGH);\n"
+           "      delay(80);\n"
+           "      digitalWrite(sdPwr, sdOnHigh ? HIGH : LOW);\n")
+    return s.replace(old, new, 1)
+edit("freeink-sdk/libs/hardware/SDCardManager/src/SdmmcBlockDevice.cpp", sdmmc)
