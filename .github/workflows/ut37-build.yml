@@ -27,19 +27,22 @@ jobs:
           path: ~/.platformio
           key: pio-ut37-${{ hashFiles('platformio.ini') }}
       - name: Install PlatformIO
-        run: pip install platformio -r scripts/requirements.txt || pip install platformio
-      - name: Apply SDK patch (UT37 board profile)
+        run: pip install platformio
+      - name: Show base version
         run: |
-          if [ -f ut37/sdk.patch ]; then
-            git -C freeink-sdk apply --check ../ut37/sdk.patch && git -C freeink-sdk apply ../ut37/sdk.patch
-          fi
+          git describe --tags --always || true
+          awk '/^\[crosspoint\]/{f=1;next} f&&/^version/{print "crosspoint.version =", $3;exit}' platformio.ini
+          git -C freeink-sdk rev-parse HEAD
+      - name: Apply UT37 board port
+        run: python3 ut37/apply_ut37.py
       - name: Build ut37
         run: pio run -e ut37
       - name: Package web flasher
         run: |
           B=.pio/build/ut37
           BOOT_APP0=$(find ~/.platformio/packages -name boot_app0.bin | head -1)
-          VER=$(python3 -c 'import configparser; c=configparser.ConfigParser(); c.read("platformio.ini"); print(c["crosspoint"]["version"])')
+          VER=$(awk '/^\[crosspoint\]/{f=1;next} f&&/^version/{print $3;exit}' platformio.ini)
+          VER=${VER:-dev}
           mkdir -p dist
           python3 scripts/make_flasher_html.py \
             --bootloader $B/bootloader.bin --partitions $B/partitions.bin \
