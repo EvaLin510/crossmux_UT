@@ -124,10 +124,13 @@ def maindiag(s):
         '      const unsigned long diagStart = millis();\n'
         '      while (!Serial && millis() - diagStart < 6000) delay(10);\n'
         '      delay(300);\n'
-        '      Serial.printf("[UT37] SD gate GPIO%d level=%d (powerActiveHigh=%d)\\n", (int)BoardConfig::ACTIVE.sd.powerEnable,\n'
+        '      char logBuf[96];\n'
+        '      snprintf(logBuf, sizeof(logBuf), "[UT37] SD gate GPIO%d level=%d (powerActiveHigh=%d)\\n", (int)BoardConfig::ACTIVE.sd.powerEnable,\n'
         '                    digitalRead(BoardConfig::ACTIVE.sd.powerEnable), (int)BoardConfig::ACTIVE.sd.powerActiveHigh);\n'
+        '      Serial.print(logBuf);\n'
         '      const bool retryOk = Storage.begin();\n'
-        '      Serial.printf("[UT37] SD retry %s\\n", retryOk ? "OK" : "FAILED");\n'
+        '      snprintf(logBuf, sizeof(logBuf), "[UT37] SD retry %s\\n", retryOk ? "OK" : "FAILED");\n'
+        '      Serial.print(logBuf);\n'
         '    }\n'
         '#endif\n')
     return s.replace(old, new, 1)
