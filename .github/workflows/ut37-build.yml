@@ -1,0 +1,56 @@
+name: UT37 build + web flasher
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['ut-1.6.0']
+    paths: ['src/**', 'lib/**', 'ut37/**', 'platformio.ini', 'freeink-sdk', '.github/workflows/ut37-build.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-ut37-${{ hashFiles('platformio.ini') }}
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Apply UT37 patches (app env + SDK board profile)
+        run: |
+          if [ -f ut37/app.patch ] && ! grep -q '\[env:ut37\]' platformio.ini; then git apply ut37/app.patch; fi
+      - name: Apply SDK patch (UT37 board profile)
+        run: |
+          if [ -f ut37/sdk.patch ]; then
+            git -C freeink-sdk apply --check ../ut37/sdk.patch && git -C freeink-sdk apply ../ut37/sdk.patch
+          fi
+      - name: Build ut37
+        run: pio run -e ut37
+      - name: Package web flasher
+        run: |
+          B=.pio/build/ut37
+          BOOT_APP0=$(find ~/.platformio/packages -name boot_app0.bin | head -1)
+          VER=$(python3 -c 'import configparser; c=configparser.ConfigParser(); c.read("platformio.ini"); print(c["crosspoint"]["version"])')
+          mkdir -p dist
+          python3 scripts/make_flasher_html.py \
+            --bootloader $B/bootloader.bin --partitions $B/partitions.bin \
+            --boot-app0 "$BOOT_APP0" --app $B/firmware.bin \
+            --title "UT37 CrossMux $VER" --out dist/UT37-Flasher.html
+          cp $B/firmware.bin dist/UT37-firmware-app.bin
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UT37-Flasher
+          path: dist/
