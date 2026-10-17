@@ -2,9 +2,15 @@ name: UT37 build + web flasher
 
 on:
   workflow_dispatch:
+    inputs:
+      base:
+        description: '編譯基底：1.6.0 = 官方穩定版（預設）；branch = 這個分支本身（你 fork 的 nightly）'
+        type: choice
+        default: '1.6.0'
+        options: ['1.6.0', 'branch']
   push:
     branches: ['ut-1.6.0']
-    paths: ['src/**', 'lib/**', 'ut37/**', 'platformio.ini', 'freeink-sdk', '.github/workflows/ut37-build.yml']
+    paths: ['ut37/**', 'scripts/make_flasher_html.py', '.github/workflows/ut37-build.yml']
 
 permissions:
   contents: read
@@ -13,30 +19,60 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: work
     steps:
+      # 1) 你的 fork：只拿 ut37/ 與 scripts/ 內的檔案
       - uses: actions/checkout@v4
         with:
+          path: ut37src
+      # 2) 編譯基底：官方 1.6.0 tag，或你的分支
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ (inputs.base || '1.6.0') == 'branch' && github.repository || '0x1abin/crossmux' }}
+          ref: ${{ (inputs.base || '1.6.0') == 'branch' && github.ref_name || '1.6.0' }}
           submodules: recursive
-          fetch-depth: 0
+          fetch-depth: 1
+          path: work
+      - name: Copy UT37 files into the build tree
+        working-directory: .
+        run: |
+          mkdir -p work/ut37 work/scripts
+          cp ut37src/ut37/* work/ut37/
+          cp ut37src/scripts/make_flasher_html.py work/scripts/
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Cache PlatformIO
-        uses: actions/cache@v4
+      - name: Restore PlatformIO cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.platformio
-          key: pio-ut37-${{ hashFiles('platformio.ini') }}
+          key: pio-ut37-${{ github.run_id }}
+          restore-keys: pio-ut37-
       - name: Install PlatformIO
         run: pip install platformio
       - name: Show base version
         run: |
+          echo "base = ${{ inputs.base || '1.6.0' }}"
           git describe --tags --always || true
           awk '/^\[crosspoint\]/{f=1;next} f&&/^version/{print "crosspoint.version =", $3;exit}' platformio.ini
           git -C freeink-sdk rev-parse HEAD
       - name: Apply UT37 board port
         run: python3 ut37/apply_ut37.py
       - name: Build ut37
-        run: pio run -e ut37
+        run: pio run -e ut37 2>&1 | tee build.log
+      - name: Show compile errors
+        if: failure()
+        run: |
+          grep -n -E 'error:|undefined reference|fatal error|#error' build.log | head -40 || true
+          echo '--- context of first error ---'
+          grep -n -m1 -B3 -A12 -E 'error:|fatal error|#error' build.log || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log
+          path: work/build.log
       - name: Package web flasher
         run: |
           B=.pio/build/ut37
@@ -47,10 +83,16 @@ jobs:
           python3 scripts/make_flasher_html.py \
             --bootloader $B/bootloader.bin --partitions $B/partitions.bin \
             --boot-app0 "$BOOT_APP0" --app $B/firmware.bin \
-            --title "UT37 CrossMux $VER" --out dist/UT37-Flasher.html
+            --title "UT37 CrossMux $VER (${{ inputs.base || '1.6.0' }})" --out dist/UT37-Flasher.html
           cp $B/firmware.bin dist/UT37-firmware-app.bin
           ls -la dist
       - uses: actions/upload-artifact@v4
         with:
           name: UT37-Flasher
-          path: dist/
+          path: work/dist/
+      - name: Save PlatformIO cache (even when the build failed)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.platformio
+          key: pio-ut37-${{ github.run_id }}
