@@ -22,6 +22,8 @@ button{font-size:1rem;padding:.7rem 1.2rem;margin:.3rem .3rem .3rem 0;cursor:poi
 <p class="note">需使用 Chrome 或 Edge（支援 Web Serial），且需連網載入刷機元件。刷機前請用 USB 線連接裝置。若找不到連接埠，先按住電源鍵關機，再重新插上 USB。</p>
 <label><input type="checkbox" id="erase"> 清除全部資料（第一次從官方韌體換過來建議勾選；會刪除設定與閱讀進度）</label><br>
 <button id="go">連接並刷機</button>
+<button id="mon">監看序列埠記錄（診斷用）</button>
+<button id="cp">複製記錄</button>
 <progress id="bar" value="0" max="100"></progress>
 <div id="status">尚未開始</div>
 <pre id="log"></pre>
@@ -62,6 +64,55 @@ $("go").onclick = async () => {
   }finally{
     try{ if(transport) await transport.disconnect(); }catch(_){}
     $("go").disabled = false;
+  }
+};
+
+let monPort = null, monReader = null, monStop = false;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+$("cp").onclick = async () => { try{ await navigator.clipboard.writeText($("log").textContent); $("status").textContent="已複製記錄"; }catch(e){ $("status").textContent="複製失敗，請手動選取"; } };
+async function readLoop(port){
+  const dec = new TextDecoder();
+  monReader = port.readable.getReader();
+  try{
+    while(true){
+      const {value, done} = await monReader.read();
+      if(done) break;
+      if(value){ $("log").textContent += dec.decode(value, {stream:true}); $("log").scrollTop = 1e9; }
+    }
+  } finally { try{ monReader.releaseLock(); }catch(_){} monReader = null; }
+}
+$("mon").onclick = async () => {
+  if(!("serial" in navigator)){ alert("請使用 Chrome 或 Edge。"); return; }
+  if(monPort){ monStop = true; try{ if(monReader) await monReader.cancel(); }catch(_){} return; }
+  monStop = false;
+  try{
+    monPort = await navigator.serial.requestPort();
+    $("mon").textContent = "停止監看";
+    log("--- 序列埠監看開始（會先重啟裝置）---");
+    let first = true;
+    while(!monStop){
+      try{
+        await monPort.open({baudRate:115200});
+        if(first){
+          first = false;
+          try{ await monPort.setSignals({dataTerminalReady:false, requestToSend:true}); await sleep(120);
+               await monPort.setSignals({dataTerminalReady:false, requestToSend:false}); }catch(_){}
+        }
+        $("status").textContent = "監看中…";
+        await readLoop(monPort);
+      }catch(e){ log("[連線中斷：" + (e.message||e) + "]"); }
+      try{ await monPort.close(); }catch(_){}
+      if(monStop) break;
+      // 裝置重啟後會重新列舉：最多等 12 秒找回連接埠
+      let found = null;
+      for(let k=0;k<40 && !found && !monStop;k++){ await sleep(300); const ps = await navigator.serial.getPorts(); if(ps.length) found = ps[0]; }
+      if(!found){ log("[找不到連接埠，已停止]"); break; }
+      monPort = found;
+    }
+  }catch(e){ log("監看結束：" + (e.message||e)); }
+  finally{
+    try{ if(monPort) await monPort.close(); }catch(_){}
+    monPort = null; $("mon").textContent = "監看序列埠記錄（診斷用）";
   }
 };
 </script></body></html>'''
