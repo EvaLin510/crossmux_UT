@@ -307,7 +307,10 @@ bool HalGPIO::verifyPowerButtonWakeup() {
   // wheel click, so a click wake is always released before this samples and
   // verification would re-sleep on every wake. Its wheel has hard external
   // pull-ups, so the ghost-wake debounce this implements is not needed.
-  if (BoardConfig::isPaperMono() || BoardConfig::isM5PaperV11() || BoardConfig::ACTIVE.input.power < 0) {
+  // UT37: same S3 native-USB boot latency drops short clicks; its SIDEKEY has a
+  // hard external 100k pull-down (active-HIGH), so ghost wakes are not a concern.
+  if (FREEINK_DEVICE_UT37 || BoardConfig::isPaperMono() || BoardConfig::isM5PaperV11() ||
+      BoardConfig::ACTIVE.input.power < 0) {
     return true;
   }
 

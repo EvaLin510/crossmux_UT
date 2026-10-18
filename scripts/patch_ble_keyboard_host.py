@@ -3,6 +3,10 @@
 from pathlib import Path
 
 Import("env")  # noqa: F821
+import sys
+
+sys.path.insert(0, env.subst("$PROJECT_DIR/scripts"))  # noqa: F821
+from pio_middleware import add_build_middleware  # noqa: E402
 
 METHOD = """  uint32_t onPassKeyDisplay(NimBLEConnInfo&) override {
     const uint32_t passkey = NimBLEDevice::getSecurityPasskey();
@@ -50,4 +54,4 @@ def compile_compatible_host(build_env, node):
     return compiled
 
 
-env.AddBuildMiddleware(compile_compatible_host, "*/BleKeyboardHost/src/BleKeyboardHost.cpp")
+add_build_middleware(env, compile_compatible_host, "*/BleKeyboardHost/src/BleKeyboardHost.cpp")

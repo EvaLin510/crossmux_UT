@@ -3,6 +3,10 @@
 import os
 
 Import("env")  # noqa: F821
+import sys
+
+sys.path.insert(0, env.subst("$PROJECT_DIR/scripts"))  # noqa: F821
+from pio_middleware import add_build_middleware  # noqa: E402
 
 config = os.path.join(
     env.subst("$PROJECT_DIR"),
@@ -16,4 +20,4 @@ def configure_host(build_env, node):
     return compiled
 
 
-env.AddBuildMiddleware(configure_host, "*/NimBLE-Arduino/src/*")
+add_build_middleware(env, configure_host, "*/NimBLE-Arduino/src/*")
