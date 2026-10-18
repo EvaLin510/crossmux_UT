@@ -57,6 +57,9 @@
 #if CROSSPOINT_CAP_SOUND_FEEDBACK
 #include <SoundFeedback.h>
 #endif
+#if FREEINK_DEVICE_UT37
+#include <Buzzer.h>
+#endif
 
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
@@ -792,6 +795,15 @@ void setup() {
   // Ensure we're not still holding the power button before leaving setup
   waitForPowerRelease();
   allowSleepAt = millis() + 2000;
+#if FREEINK_DEVICE_UT37 && defined(ENABLE_SERIAL_LOG)
+  {  // UT37 dev builds: one quiet beep (25 % duty, 80 ms) when boot has finished.
+    static Buzzer bootBuzzer;
+    if (bootBuzzer.begin()) {
+      bootBuzzer.beep();
+      bootBuzzer.end();
+    }
+  }
+#endif
 }
 
 void loop() {

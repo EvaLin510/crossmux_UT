@@ -7,6 +7,10 @@
 #include <sys/time.h>
 #include <time.h>
 
+#if FREEINK_DEVICE_UT37 && __has_include(<BuildEpoch.h>)
+#include <BuildEpoch.h>
+#endif
+
 HalClock halClock;
 
 namespace {
@@ -78,6 +82,18 @@ void HalClock::begin() {
   if (!hasValidTime() && restoreSystemTimeFromRtc()) {
     LOG_INF("CLK", "System UTC clock restored from external RTC");
   }
+#ifdef CROSSMUX_BUILD_EPOCH
+  // UT37: an RTC that has never held a valid time (VLF set after first power-up)
+  // is seeded once from the build time, so the clock is usable without manual
+  // setup. It runs a few minutes behind (build-to-flash delay) until the next
+  // Wi-Fi SNTP sync, which corrects both the system clock and the RTC.
+  if (_rtcAvailable && !hasValidTime()) {
+    const struct timeval buildTime = {static_cast<time_t>(CROSSMUX_BUILD_EPOCH), 0};
+    if (settimeofday(&buildTime, nullptr) == 0 && updateRtcFromSystemTime()) {
+      LOG_INF("CLK", "External RTC had no valid time; seeded from build time");
+    }
+  }
+#endif
 }
 
 time_t HalClock::nowUtc() const {
