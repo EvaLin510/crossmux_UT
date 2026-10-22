@@ -8,7 +8,6 @@
 
 #include <algorithm>
 
-#include "AchievementsStore.h"
 #include "CrossPointSettings.h"
 #include "ProgressFile.h"
 #include "ReaderActivity.h"
@@ -17,7 +16,6 @@
 #include "XtcReaderChapterSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "util/AchievementPopupUtils.h"
 
 bool XtcReaderActivity::loadBook() {
   auto loadedXtc = makeUniqueNoThrow<Xtc>(bookPath, "/.crosspoint");
@@ -42,8 +40,6 @@ bool XtcReaderActivity::loadBook() {
 
 void XtcReaderActivity::onExit() {
   READING_STATS.endSession();
-  ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
-  showPendingAchievementPopups(renderer);
   ReaderActivity::onExit();
 }
 
@@ -376,19 +372,3 @@ void XtcReaderActivity::loadProgress() {
   }
 }
 
-ScreenshotInfo XtcReaderActivity::getScreenshotInfo() const {
-  ScreenshotInfo info;
-  info.readerType = ScreenshotInfo::ReaderType::Xtc;
-  if (xtc) {
-    const std::string t = xtc->getTitle();
-    snprintf(info.title, sizeof(info.title), "%s", t.c_str());
-    const uint32_t pageCount = xtc->getPageCount();
-    info.totalPages = pageCount;
-    uint32_t clampedPage = (pageCount > 0 && currentPage >= pageCount) ? pageCount - 1 : currentPage;
-    info.progressPercent = pageCount > 0 ? xtc->calculateProgress(clampedPage) : 0;
-    info.currentPage = static_cast<int>(clampedPage) + 1;
-  } else {
-    info.currentPage = currentPage + 1;
-  }
-  return info;
-}

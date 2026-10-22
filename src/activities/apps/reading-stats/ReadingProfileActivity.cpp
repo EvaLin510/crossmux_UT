@@ -15,6 +15,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/HeaderDateUtils.h"
+#include "util/PercentUtils.h"
 #include "util/TimeUtils.h"
 
 namespace {
@@ -64,8 +65,6 @@ int roundDiv(const int numerator, const int denominator) {
   }
   return (numerator + denominator / 2) / denominator;
 }
-
-int clampPercent(const int value) { return std::clamp(value, 0, 100); }
 
 std::string formatFraction(const int value, const int total) {
   return std::to_string(value) + "/" + std::to_string(total);

@@ -55,6 +55,19 @@ constexpr int STATUS_BAR_CLOCK_ITEMS = CrossPointSettings::STATUS_BAR_CLOCK_MODE
 const StrId statusBarClockNames[STATUS_BAR_CLOCK_ITEMS] = {StrId::STR_HIDE, StrId::STR_DIR_RIGHT, StrId::STR_DIR_LEFT};
 
 const int verticalPreviewTextPadding = 40;
+
+// Rows shown, as ITEM_* values. UT37 always shows the battery and the clock in
+// its top strip and keeps the progress bar thin, so those rows are hidden there.
+#if FREEINK_DEVICE_UT37
+// XTC books carry no status bar on UT37, so its row is hidden too.
+constexpr int VISIBLE_ITEMS[] = {ITEM_CHAPTER_PAGE_COUNT, ITEM_BOOK_PROGRESS_PERCENTAGE, ITEM_PROGRESS_BAR, ITEM_TITLE};
+#else
+constexpr int VISIBLE_ITEMS[] = {ITEM_CHAPTER_PAGE_COUNT, ITEM_BOOK_PROGRESS_PERCENTAGE,
+                                 ITEM_PROGRESS_BAR,       ITEM_PROGRESS_BAR_THICKNESS,
+                                 ITEM_TITLE,              ITEM_BATTERY,
+                                 ITEM_XTC_STATUS_BAR,     ITEM_CLOCK};
+#endif
+constexpr int VISIBLE_ITEM_COUNT = static_cast<int>(sizeof(VISIBLE_ITEMS) / sizeof(VISIBLE_ITEMS[0]));
 }  // namespace
 
 StatusBarSettingsActivity::StatusBarSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -63,7 +76,7 @@ StatusBarSettingsActivity::StatusBarSettingsActivity(GfxRenderer& renderer, Mapp
 void StatusBarSettingsActivity::onEnter() {
   UiListActivity::onEnter();
 
-  visibleItemCount = FULL_MENU_ITEMS;
+  visibleItemCount = VISIBLE_ITEM_COUNT;
 
   // Clamp statusBarProgressBar and statusBarTitle in case of corrupt/migrated data
   if (SETTINGS.statusBarProgressBar >= PROGRESS_BAR_ITEMS) {
@@ -89,7 +102,7 @@ void StatusBarSettingsActivity::onEnter() {
   // Labels never change (unlike the values, which track live SETTINGS
   // state), so they're set once here rather than every buildScreen() call.
   for (int i = 0; i < visibleItemCount; i++) {
-    rowItems_[i].label = I18N.get(menuNames[i]);
+    rowItems_[i].label = I18N.get(menuNames[VISIBLE_ITEMS[i]]);
     rowItems_[i].actionValue = static_cast<int16_t>(i);
   }
 }
@@ -109,7 +122,8 @@ void StatusBarSettingsActivity::activateIndex(const int index) {
 }
 
 void StatusBarSettingsActivity::handleSelection() {
-  switch (nav.selected) {
+  if (nav.selected < 0 || nav.selected >= VISIBLE_ITEM_COUNT) return;
+  switch (VISIBLE_ITEMS[nav.selected]) {
     case ITEM_CHAPTER_PAGE_COUNT:
       SETTINGS.statusBarChapterPageCount = (SETTINGS.statusBarChapterPageCount + 1) % 2;
       break;
@@ -156,7 +170,8 @@ void StatusBarSettingsActivity::handleSelection() {
 }
 
 std::string StatusBarSettingsActivity::rowValueText(const int index) {
-  switch (index) {
+  if (index < 0 || index >= VISIBLE_ITEM_COUNT) return tr(STR_HIDE);
+  switch (VISIBLE_ITEMS[index]) {
     case ITEM_CHAPTER_PAGE_COUNT:
       return SETTINGS.statusBarChapterPageCount ? tr(STR_SHOW) : tr(STR_HIDE);
     case ITEM_BOOK_PROGRESS_PERCENTAGE:
@@ -222,7 +237,11 @@ void StatusBarSettingsActivity::render(RenderLock&&) {
 
   // Header via GUI.drawHeader (already FreeInkUI-themed) for the battery
   // indicator; the list renders through the app; the preview stays raw.
+#if FREEINK_DEVICE_UT37
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_READING_STATUS_BAR));
+#else
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_CUSTOMISE_STATUS_BAR));
+#endif
 
   renderUi();
 

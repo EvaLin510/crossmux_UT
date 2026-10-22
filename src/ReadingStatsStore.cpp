@@ -13,6 +13,7 @@
 #include "CrossPointState.h"
 #include "util/BookCacheUtils.h"
 #include "util/BookIdentity.h"
+#include "util/PercentUtils.h"
 #include "util/TimeUtils.h"
 
 namespace {
@@ -23,8 +24,6 @@ constexpr unsigned long CHECKPOINT_INTERVAL_MS = 10UL * 60UL * 1000UL;
 constexpr unsigned long CHECKPOINT_RETRY_INTERVAL_MS = 30UL * 1000UL;
 constexpr uint64_t MIN_SESSION_READING_MS = 3ULL * 60ULL * 1000ULL;
 constexpr size_t MAX_SESSION_LOG_ENTRIES = 256;
-
-uint8_t clampPercent(const uint8_t percent) { return std::min<uint8_t>(percent, 100); }
 
 bool countsForStreak(const ReadingDayStats& day) { return day.readingMs >= getDailyReadingGoalMs(); }
 
@@ -669,9 +668,9 @@ void ReadingStatsStore::beginSession(const std::string& path, const std::string&
   auto& book = books[0];
   activeSession.startProgressPercent = book.lastProgressPercent;
   activeSession.startCompleted = book.completed;
-  book.lastProgressPercent = clampPercent(progressPercent);
+  book.lastProgressPercent = static_cast<uint8_t>(clampPercent(progressPercent));
   book.chapterTitle = chapterTitle;
-  book.chapterProgressPercent = clampPercent(chapterProgressPercent);
+  book.chapterProgressPercent = static_cast<uint8_t>(clampPercent(chapterProgressPercent));
   if (book.lastProgressPercent >= 100) {
     book.completed = true;
   }
@@ -735,8 +734,8 @@ void ReadingStatsStore::updateProgress(const uint8_t progressPercent, const bool
   }
 
   auto& book = books[activeSession.bookIndex];
-  const uint8_t clampedBookProgress = clampPercent(progressPercent);
-  const uint8_t clampedChapterProgress = clampPercent(chapterProgressPercent);
+  const auto clampedBookProgress = static_cast<uint8_t>(clampPercent(progressPercent));
+  const auto clampedChapterProgress = static_cast<uint8_t>(clampPercent(chapterProgressPercent));
   const bool progressChanged = book.lastProgressPercent != clampedBookProgress;
   const bool chapterTitleChanged = book.chapterTitle != chapterTitle;
   const bool chapterProgressChanged = book.chapterProgressPercent != clampedChapterProgress;

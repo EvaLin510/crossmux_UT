@@ -198,6 +198,66 @@ framebuffer or SD font is needed.
 The default sleep screen is Light. Existing saved sleep-screen selections are
 preserved; the default applies when no selection has been saved.
 
+### UT37 compact Inx layout
+
+UT37 is locked to Inx (`CrossPointSettings::enforceBoardTheme()`, theme option
+hidden), so `UITheme::setTheme()` compiles only Inx and the Classic OOM fallback
+there, and `ActivityManager::goHome()`/`goToRecentBooks()` route to InxRecent.
+The generic `HomeActivity`, `RecentBooksActivity`, Lyra 3 Covers, Lyra Carousel
+and RoundedRaff are then unreferenced and dropped at link time. `LyraTheme`
+stays because Inx derives from it.
+
+On `FREEINK_DEVICE_UT37` (240x416, ~150 PPI) `InxCompactLayout` in
+`src/InxItemLayout.h` switches the Inx theme to values sized for the 13/14/15 px
+bitmap UI faces: 44 px list/menu rows, 8 px side padding, 40 px option-popup rows,
+hand-drawn 16 px list icons (`components/icons/listIcons16.h`, pixel art rather
+than scaled 24 px Lucide), regular-weight in-list headings one UI size above
+body text, and page titles in `drawHeader()` (e.g. the book title over the
+reader menu) at body size. Drawing and touch hit-testing read the same constants. The 66 px header
+band keeps its height: its top 18 px is a status strip (clock left, battery
+right) and the tab icons or page title use the rest, so the header tap zone is
+unchanged. Main tabs have no footer; book info is shown only in the reader.
+Tab icons are the user-supplied Feather SVGs (home, folder, grid, settings,
+pie-chart) in `components/icons/inxTabs26.h`, drawn 1:1 at 24 px on a 26 px
+cell by `scripts/icon_to_bitmap.py` so 2 px strokes land on whole pixels.
+
+The battery follows `battery.svg`: a 28x15 body with a 2 px rounded frame, a
+1 px gap and a 2x5 nub, with the percentage drawn black inside in the
+status-bar font. A bolt (`battery-charging.svg`) appears left of it while
+charging. In the reader,
+`UITheme::getStatusBarTopHeight()` reserves the same 18 px strip at the top for
+the clock (left) and battery (right). EPUB, TXT and dictionary word selection add
+it to the top margin, and the bottom lane keeps progress, title and the
+auto page-turn indicator. Both reader caches already reject a changed viewport.
+Other boards return 0 and keep the original layout.
+
+Remaining UT37 layouts: Recent keeps Flow, Grid and Icons
+(`InxRecentGeometry::footerReservedHeight` is 8 px, since the battery sits in
+the header strip; Flow spaces its text from line heights). Coverless books
+(TXT, EPUB without a cover) show their title wrapped in white on the
+placeholder's black part. Library is list-only
+(`FileBrowserActivity::usesIconLayout()` is constant false), and the Apps icon
+grid draws its 32 px icons 1:1 so icon and label fit the 80x87 px cells.
+
+Slider dialogs (`UiSliderDialog.h`: go-to-percent, sleep time and the other
+interval pickers) and the date/time steppers use rounded-square -/+ buttons on
+UT37 with 12 px, 2 px-stroke glyphs (`icon_step_*_12`, body-text size). The
+slider row uses 4 px side margins and 40 px tap squares, so the slider is about
+twice as long as with the default margins. Each button's minimum-touch rect
+ends where the slider rect begins.
+
+The control center draws every button and tile box 3 px inside its layout
+cell on UT37 (`kCompactBoxInset`; the cells, panel height and hit regions are
+unchanged). Its lamp and auto-read toggles use `components/icons/panelIcons24.h`,
+redrawn after the user-supplied images.
+
+The control center (`FrontlightPanelActivity`) uses compact brightness/warmth
+rows on UT37: `[-] level [+] [lamp]`, 40 px buttons with hand-drawn 16 px
+glyphs (`components/icons/stepIcons.h`) and no caption. The capsule slider
+does not fit between finger-sized buttons at 240 px. The readout comes from
+`formatBrightnessReadout()`, and both step buttons go through
+`adjustBrightness()`.
+
 ## Retained Framebuffer Updates
 
 The firmware has one framebuffer, and its contents remain available after

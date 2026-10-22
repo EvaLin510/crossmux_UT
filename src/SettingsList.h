@@ -182,6 +182,63 @@ inline std::vector<StrId> buildLongPressMenuValues() {
   return {VALUES, VALUES + count};
 }
 
+#if FREEINK_DEVICE_UT37
+// A trimmed option list over a persisted enum: shows `labels` in order and
+// stores `values[i]` for the i-th label, so stored values keep their meaning.
+// It has no valuePtr, so the generic JSON save skips it; each field it edits
+// is persisted by a hidden raw row (kUt37PersistOnly, below).
+template <size_t N>
+inline SettingInfo mappedEnum(const StrId name, uint8_t CrossPointSettings::*field, const StrId (&labels)[N],
+                              const uint8_t (&values)[N], const char* key, const StrId category) {
+  return SettingInfo::DynamicEnum(
+      name, std::vector<StrId>(labels, labels + N),
+      [field, &values] {
+        const uint8_t stored = SETTINGS.*field;
+        for (size_t i = 0; i < N; ++i) {
+          if (values[i] == stored) return static_cast<uint8_t>(i);
+        }
+        return uint8_t{0};
+      },
+      [field, &values](const uint8_t index) {
+        if (index < N) SETTINGS.*field = values[index];
+      },
+      key, category);
+}
+
+inline constexpr StrId kUt37SleepScreenLabels[] = {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_BOOK_COVER,
+                                                   StrId::STR_CUSTOM_IMAGE, StrId::STR_CLOCK};
+inline constexpr uint8_t kUt37SleepScreenValues[] = {CrossPointSettings::DARK, CrossPointSettings::LIGHT,
+                                                     CrossPointSettings::COVER, CrossPointSettings::CUSTOM,
+                                                     CrossPointSettings::CLOCK};
+inline constexpr StrId kUt37RefreshLabels[] = {StrId::STR_PAGES_12, StrId::STR_PAGES_24, StrId::STR_PAGES_36,
+                                               StrId::STR_NEVER};
+inline constexpr uint8_t kUt37RefreshValues[] = {CrossPointSettings::REFRESH_12, CrossPointSettings::REFRESH_24,
+                                                 CrossPointSettings::REFRESH_36, CrossPointSettings::REFRESH_NEVER};
+inline constexpr StrId kUt37RecentLabels[] = {StrId::STR_LAYOUT_FLOW, StrId::STR_LAYOUT_GRID, StrId::STR_LAYOUT_ICONS};
+inline constexpr uint8_t kUt37RecentValues[] = {static_cast<uint8_t>(InxRecentLayout::Flow),
+                                                static_cast<uint8_t>(InxRecentLayout::Grid),
+                                                static_cast<uint8_t>(InxRecentLayout::Icons)};
+inline constexpr StrId kUt37ImageLabels[] = {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_SUPPRESS};
+inline constexpr uint8_t kUt37ImageValues[] = {CrossPointSettings::IMAGES_DISPLAY, CrossPointSettings::IMAGES_SUPPRESS};
+// Function key: short and long press offer the same actions, in this order.
+inline constexpr StrId kUt37KeyLabels[] = {StrId::STR_KEY_SLEEP_WAKE, StrId::STR_KEY_POWER,     StrId::STR_KEY_FRONTLIGHT,
+                                           StrId::STR_AUTO_TURN,      StrId::STR_KEY_BLUETOOTH, StrId::STR_FOOTNOTES,
+                                           StrId::STR_NONE_OPT};
+// Short press also offers Back, listed first (it is the UT37 default).
+inline constexpr StrId kUt37ShortKeyLabels[] = {StrId::STR_KEY_BACK,      StrId::STR_KEY_SLEEP_WAKE,
+                                                StrId::STR_KEY_POWER,     StrId::STR_KEY_FRONTLIGHT,
+                                                StrId::STR_AUTO_TURN,     StrId::STR_KEY_BLUETOOTH,
+                                                StrId::STR_FOOTNOTES,     StrId::STR_NONE_OPT};
+inline constexpr uint8_t kUt37ShortKeyValues[] = {
+    CrossPointSettings::KEY_BACK,      CrossPointSettings::SLEEP,         CrossPointSettings::POWER_OFF,
+    CrossPointSettings::KEY_FRONTLIGHT, CrossPointSettings::KEY_AUTO_TURN, CrossPointSettings::KEY_BLUETOOTH,
+    CrossPointSettings::FOOTNOTES,     CrossPointSettings::IGNORE};
+inline constexpr uint8_t kUt37LongKeyValues[] = {
+    CrossPointSettings::LONG_SLEEP,     CrossPointSettings::LONG_POWER_OFF, CrossPointSettings::LONG_FRONTLIGHT,
+    CrossPointSettings::LONG_AUTO_TURN, CrossPointSettings::LONG_BLUETOOTH, CrossPointSettings::LONG_FOOTNOTES,
+    CrossPointSettings::LONG_NONE};
+#endif
+
 // Shared base settings list used by the device UI, persistence, and web API.
 // Each entry has a key (for JSON API) and category (for grouping).
 // ACTION-type entries and entries without a key are device-only.
@@ -189,7 +246,8 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
     // Enum settings are persisted as numeric values. Assign these labels by enum
     // value so a reordered menu or enum cannot silently swap their behavior.
-    std::vector<StrId> sleepScreenValues(CrossPointSettings::SLEEP_SCREEN_MODE_COUNT);
+    // CLOCK is UT37-only and the last mode, so the generic list stops before it.
+    std::vector<StrId> sleepScreenValues(CrossPointSettings::CLOCK);
     sleepScreenValues[CrossPointSettings::DARK] = StrId::STR_DARK;
     sleepScreenValues[CrossPointSettings::LIGHT] = StrId::STR_LIGHT;
     sleepScreenValues[CrossPointSettings::CUSTOM] = StrId::STR_CUSTOM;
@@ -206,29 +264,53 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
 
     std::vector<SettingInfo> v = {
         // --- Display ---
+#if FREEINK_DEVICE_UT37
+        mappedEnum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen, kUt37SleepScreenLabels,
+                   kUt37SleepScreenValues, nullptr, StrId::STR_CAT_DISPLAY),
+#else
         SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen, std::move(sleepScreenValues),
                           "sleepScreen", StrId::STR_CAT_DISPLAY),
+#endif
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
                           {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY),
+#if !FREEINK_DEVICE_UT37
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
                           {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
                           "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
                           {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "quickResumeSleepScreen",
                           StrId::STR_CAT_DISPLAY),
+#endif
+#if !FREEINK_DEVICE_UT37
+        // UT37 replaces Standby with the Clock sleep screen.
         SettingInfo::Toggle(StrId::STR_STANDBY_TITLE, &CrossPointSettings::standbyShortcutEnabled,
                             "standbyShortcutEnabled", StrId::STR_CAT_DISPLAY),
+#endif
+#if !FREEINK_DEVICE_UT37
         SettingInfo::Enum(StrId::STR_HIDE_BATTERY, &CrossPointSettings::hideBatteryPercentage,
                           {StrId::STR_NEVER, StrId::STR_IN_READER, StrId::STR_ALWAYS}, "hideBatteryPercentage",
                           StrId::STR_CAT_DISPLAY),
+#endif
+#if FREEINK_DEVICE_UT37
+        mappedEnum(StrId::STR_REFRESH_FREQ, &CrossPointSettings::refreshFrequency, kUt37RefreshLabels,
+                   kUt37RefreshValues, nullptr, StrId::STR_CAT_DISPLAY),
+#else
         SettingInfo::Enum(StrId::STR_REFRESH_FREQ, &CrossPointSettings::refreshFrequency,
                           {StrId::STR_PAGES_1, StrId::STR_PAGES_5, StrId::STR_PAGES_10, StrId::STR_PAGES_15,
                            StrId::STR_PAGES_30, StrId::STR_NEVER},
                           "refreshFrequency", StrId::STR_CAT_DISPLAY),
+#endif
+#if !FREEINK_DEVICE_UT37
+        // UT37 is locked to Inx (CrossPointSettings::enforceBoardTheme).
         SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
                           {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_EXTENDED,
                            StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_LYRA_CAROUSEL, StrId::STR_THEME_INX},
                           "uiTheme", StrId::STR_CAT_DISPLAY),
+#endif
+#if FREEINK_DEVICE_UT37
+        mappedEnum(StrId::STR_INX_RECENT_LAYOUT, &CrossPointSettings::inxRecentLayout, kUt37RecentLabels,
+                   kUt37RecentValues, nullptr, StrId::STR_CAT_DISPLAY),
+#else
         SettingInfo::Enum(StrId::STR_INX_RECENT_LAYOUT, &CrossPointSettings::inxRecentLayout,
                           {StrId::STR_LAYOUT_FLOW, StrId::STR_LAYOUT_GRID, StrId::STR_LAYOUT_LIST,
                            StrId::STR_LAYOUT_ICONS, StrId::STR_COVER},
@@ -236,6 +318,7 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         SettingInfo::Enum(StrId::STR_INX_LIBRARY_LAYOUT, &CrossPointSettings::inxLibraryLayout,
                           {StrId::STR_LAYOUT_ICONS, StrId::STR_LAYOUT_LIST}, "inxLibraryLayout",
                           StrId::STR_CAT_DISPLAY),
+#endif
         SettingInfo::Enum(StrId::STR_INX_APPS_LAYOUT, &CrossPointSettings::inxAppsLayout,
                           {StrId::STR_LAYOUT_ICONS, StrId::STR_LAYOUT_LIST}, "inxAppsLayout", StrId::STR_CAT_DISPLAY),
         SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
@@ -246,10 +329,12 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         SettingInfo::Toggle(StrId::STR_RESTORE_LIGHT_ON_WAKE, &CrossPointSettings::frontlightRestoreOnWake,
                             "frontlightRestoreOnWake", StrId::STR_CAT_DISPLAY),
 #endif
+#if !FREEINK_DEVICE_UT37
         // Night mode = inverted output polarity everywhere (ActivityManager
         // applies it to every activity), so it lives in the Display category.
         SettingInfo::Toggle(StrId::STR_NIGHT_MODE, &CrossPointSettings::screenInverted, "screenInverted",
                             StrId::STR_CAT_DISPLAY),
+#endif
 
         // --- Reader ---
         // Built-in font-family entry. Replaced per-call with a registry-aware
@@ -286,8 +371,6 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         SettingInfo::Toggle(StrId::STR_FOCUS_READING, &CrossPointSettings::focusReadingEnabled, "focusReadingEnabled",
                             StrId::STR_CAT_READER)
             .withTextSettings(),
-        SettingInfo::Toggle(StrId::STR_READING_BACKGROUND, &CrossPointSettings::readingBackgroundEnabled,
-                            "readingBackgroundEnabled", StrId::STR_CAT_READER),
         SettingInfo::Toggle(StrId::STR_READING_GUIDE_LINE, &CrossPointSettings::readingGuideLineEnabled,
                             "readingGuideLineEnabled", StrId::STR_CAT_READER)
             .withTextSettings(),
@@ -304,16 +387,22 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         SettingInfo::Toggle(StrId::STR_HYPHENATION, &CrossPointSettings::hyphenationEnabled, "hyphenationEnabled",
                             StrId::STR_CAT_READER)
             .withTextSettings(),
+#if !FREEINK_DEVICE_UT37
         SettingInfo::Enum(
             StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
             {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_ORIENTATION_INVERTED, StrId::STR_LANDSCAPE_CCW},
             "orientation", StrId::STR_CAT_READER),
+#endif
         SettingInfo::Toggle(StrId::STR_EXTRA_SPACING, &CrossPointSettings::extraParagraphSpacing,
                             "extraParagraphSpacing", StrId::STR_CAT_READER)
             .withTextSettings(),
         SettingInfo::Toggle(StrId::STR_TEXT_AA, &CrossPointSettings::textAntiAliasing, "textAntiAliasing",
                             StrId::STR_CAT_READER)
             .withTextSettings(),
+#if FREEINK_DEVICE_UT37
+        mappedEnum(StrId::STR_EPUB_IMAGES, &CrossPointSettings::imageRendering, kUt37ImageLabels, kUt37ImageValues,
+                   nullptr, StrId::STR_CAT_READER),
+#else
         SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
                           {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS},
                           "imageRendering", StrId::STR_CAT_READER),
@@ -322,7 +411,9 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         SettingInfo::Enum(StrId::STR_READER_MENU_STYLE, &CrossPointSettings::readerMenuStyle,
                           {StrId::STR_MENU_STYLE_LIST, StrId::STR_MENU_STYLE_TOOLBAR}, "readerMenuStyle",
                           StrId::STR_CAT_READER),
+#endif
         // --- Controls ---
+#if !FREEINK_DEVICE_UT37
         SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
                           {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV, StrId::STR_DISABLED}, "sideButtonLayout",
                           StrId::STR_CAT_CONTROLS),
@@ -330,6 +421,7 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
             StrId::STR_TOUCH_READER_CONTROLS, &CrossPointSettings::touchReaderControls,
             {StrId::STR_STATE_OFF, StrId::STR_STATE_TAP, StrId::STR_STATE_SWIPE, StrId::STR_STATE_INVERTED_TAP},
             "touchReaderControls", StrId::STR_CAT_CONTROLS),
+#endif
         // Persisted under the legacy "tapForReaderMenu" key: old saves map
         // 0 = Off, 1 = Tap.
         SettingInfo::Enum(StrId::STR_SHOW_READER_MENU, &CrossPointSettings::showReaderMenu,
@@ -337,13 +429,25 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                           StrId::STR_CAT_CONTROLS),
         SettingInfo::Toggle(StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION, &CrossPointSettings::frontButtonFollowOrientation,
                             "frontButtonFollowOrientation", StrId::STR_CAT_CONTROLS),
+#if !FREEINK_DEVICE_UT37
         SettingInfo::Enum(StrId::STR_LONG_PRESS_BEHAVIOR, &CrossPointSettings::longPressButtonBehavior,
                           {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
                            StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION},
                           "longPressButtonBehavior", StrId::STR_CAT_CONTROLS),
+#endif
+#if !FREEINK_DEVICE_UT37
+        // UT37 has no Confirm/Home key; Reader > Touch long-press replaces this.
         SettingInfo::Enum(StrId::STR_LONG_PRESS_MENU, &CrossPointSettings::longPressMenuFunction,
                           buildLongPressMenuValues(), "longPressMenuFunction", StrId::STR_CAT_CONTROLS),
-#if FREEINK_CAP_TOUCH
+#endif
+#if FREEINK_DEVICE_UT37
+        // UT37's only key is the top-left function key (the bottom-left EN key is
+        // the chip reset and cannot be read).
+        mappedEnum(StrId::STR_FUNC_KEY_SHORT, &CrossPointSettings::shortPwrBtn, kUt37ShortKeyLabels, kUt37ShortKeyValues,
+                   nullptr, StrId::STR_CAT_CONTROLS),
+        mappedEnum(StrId::STR_FUNC_KEY_LONG, &CrossPointSettings::longPwrBtn, kUt37KeyLabels, kUt37LongKeyValues,
+                   nullptr, StrId::STR_CAT_CONTROLS),
+#elif FREEINK_CAP_TOUCH
         SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
                           {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
                            StrId::STR_FOOTNOTES, StrId::STR_CONFIRM},
@@ -354,8 +458,6 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
             {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH, StrId::STR_FOOTNOTES},
             "shortPwrBtn", StrId::STR_CAT_CONTROLS),
 #endif
-        SettingInfo::Toggle(StrId::STR_PWR_BTN_FOOTNOTE_BACK, &CrossPointSettings::pwrBtnFootnoteBack,
-                            "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS),
         SettingInfo::Toggle(StrId::STR_BACK_SHORT_TO_FILE_BROWSER, &CrossPointSettings::backShortToFileBrowser,
                             "backShortToFileBrowser", StrId::STR_CAT_CONTROLS),
 
@@ -380,19 +482,14 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
 #endif
         SettingInfo::Toggle(StrId::STR_REMOVE_READ_FROM_RECENTS, &CrossPointSettings::removeReadBooksFromRecents,
                             "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM),
+#if FREEINK_DEVICE_UT37
+        SettingInfo::Toggle(StrId::STR_MOVE_READ_TO_READ_FOLDER, &CrossPointSettings::moveFinishedToReadFolder,
+                            "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
+#else
         SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
+#endif
         // Reading Analytics suite
-        SettingInfo::Enum(StrId::STR_DAILY_GOAL, &CrossPointSettings::dailyGoalTarget,
-                          {StrId::STR_MIN_15, StrId::STR_MIN_30, StrId::STR_MIN_45, StrId::STR_MIN_60},
-                          "dailyGoalTarget", StrId::STR_CAT_READER)
-            .withReadingStatsSettings(),
-        SettingInfo::Toggle(StrId::STR_ENABLE_ACHIEVEMENTS, &CrossPointSettings::achievementsEnabled,
-                            "achievementsEnabled", StrId::STR_CAT_READER)
-            .withReadingStatsSettings(),
-        SettingInfo::Toggle(StrId::STR_ACHIEVEMENT_POPUPS, &CrossPointSettings::achievementPopups, "achievementPopups",
-                            StrId::STR_CAT_READER)
-            .withReadingStatsSettings(),
 
         // OPDS download folder: persisted + web-exposed, but category-less so it
         // is hidden from the on-device Settings screen (edited via OPDS UI).
@@ -412,6 +509,29 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         SettingInfo::Value(StrId::STR_WARMTH, &CrossPointSettings::frontlightWarmth, {0, 100, 5}, "frontlightWarmth"),
 #endif
         SettingInfo::Toggle(StrId::STR_FRONTLIGHT, &CrossPointSettings::frontlightOn, "frontlightOn"),
+#if FREEINK_DEVICE_UT37
+        // kUt37PersistOnly: category-less raw rows that keep fields saved whose
+        // Settings rows UT37 trims (mappedEnum) or moves to the control center
+        // (orientation, night mode). Hidden from the on-device Settings screen.
+        SettingInfo::Value(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
+                           {0, CrossPointSettings::SLEEP_SCREEN_MODE_COUNT - 1, 1}, "sleepScreen"),
+        SettingInfo::Value(StrId::STR_REFRESH_FREQ, &CrossPointSettings::refreshFrequency,
+                           {0, CrossPointSettings::REFRESH_FREQUENCY_COUNT - 1, 1}, "refreshFrequency"),
+        SettingInfo::Value(StrId::STR_INX_RECENT_LAYOUT, &CrossPointSettings::inxRecentLayout,
+                           {0, static_cast<uint8_t>(InxRecentLayout::Count) - 1, 1}, "inxRecentLayout"),
+        SettingInfo::Value(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
+                           {0, CrossPointSettings::IMAGE_RENDERING_COUNT - 1, 1}, "imageRendering"),
+        SettingInfo::Value(StrId::STR_FUNC_KEY_SHORT, &CrossPointSettings::shortPwrBtn,
+                           {0, CrossPointSettings::SHORT_PWRBTN_COUNT - 1, 1}, "shortPwrBtn"),
+        SettingInfo::Value(StrId::STR_FUNC_KEY_LONG, &CrossPointSettings::longPwrBtn,
+                           {0, CrossPointSettings::LONG_PWRBTN_COUNT - 1, 1}, "longPwrBtn"),
+        SettingInfo::Value(StrId::STR_ORIENTATION, &CrossPointSettings::orientation, {0, 3, 1}, "orientation"),
+        SettingInfo::Toggle(StrId::STR_NIGHT_MODE, &CrossPointSettings::screenInverted, "screenInverted"),
+#endif
+        // Auto page turn speed: persisted + web-exposed, category-less so the
+        // control center owns its on-device editing.
+        SettingInfo::Value(StrId::STR_AUTO_TURN_PAGES_PER_MIN, &CrossPointSettings::autoPageTurnRate, {1, 30, 1},
+                           "autoPageTurnRate"),
 
         // --- KOReader Sync (web-only, uses KOReaderCredentialStore) ---
         SettingInfo::DynamicString(
@@ -467,17 +587,21 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         SettingInfo::Enum(StrId::STR_PROGRESS_BAR, &CrossPointSettings::statusBarProgressBar,
                           {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE}, "statusBarProgressBar",
                           StrId::STR_CUSTOMISE_STATUS_BAR),
+#if !FREEINK_DEVICE_UT37
         SettingInfo::Enum(StrId::STR_PROGRESS_BAR_THICKNESS, &CrossPointSettings::statusBarProgressBarThickness,
                           {StrId::STR_PROGRESS_BAR_THIN, StrId::STR_PROGRESS_BAR_MEDIUM, StrId::STR_PROGRESS_BAR_THICK},
                           "statusBarProgressBarThickness", StrId::STR_CUSTOMISE_STATUS_BAR),
+#endif
         SettingInfo::Enum(StrId::STR_TITLE, &CrossPointSettings::statusBarTitle,
                           {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE}, "statusBarTitle",
                           StrId::STR_CUSTOMISE_STATUS_BAR),
         SettingInfo::Toggle(StrId::STR_BATTERY, &CrossPointSettings::statusBarBattery, "statusBarBattery",
                             StrId::STR_CUSTOMISE_STATUS_BAR),
+#if !FREEINK_DEVICE_UT37
         SettingInfo::Enum(StrId::STR_XTC_STATUS_BAR, &CrossPointSettings::xtcStatusBarMode,
                           {StrId::STR_HIDE, StrId::STR_BOTTOM, StrId::STR_TOP}, "xtcStatusBarMode",
                           StrId::STR_CUSTOMISE_STATUS_BAR),
+#endif
         // Clock entries (web settings; device UI groups them under Date & Time).
         // Range 0..104 = quarter-hour steps from UTC-12:00 to UTC+14:00, biased by 48.
         SettingInfo::Enum(StrId::STR_CLOCK, &CrossPointSettings::statusBarClock, std::move(statusBarClockValues),

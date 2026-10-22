@@ -20,6 +20,12 @@
 #include "HalGPIO.h"
 #include "Waveshare397Power.h"
 
+#if FREEINK_DEVICE_UT37
+#include <driver/usb_serial_jtag.h>
+
+#include "HalFrontlight.h"
+#endif
+
 #if FREEINK_DEVICE_PAPERMONO
 #include <M5Pm1.h>
 #endif
@@ -192,6 +198,90 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
   // immediately wake the device again), then arms the wake source and sleeps.
   freeink::PowerManager::deepSleepUntilPowerButton();
 #endif
+#endif
+}
+
+HalPowerManager::IdleWake HalPowerManager::idleLightSleep(const uint32_t maxMs) {
+#if FREEINK_DEVICE_UT37
+  if (maxMs == 0 || WiFi.getMode() != WIFI_MODE_NULL || Frontlight.isOn() || usb_serial_jtag_is_connected()) {
+    return IdleWake::None;
+  }
+  // Hold modeMutex for the whole sleep so no render can take a power Lock (and
+  // start SPI traffic) between the check and esp_light_sleep_start().
+  xSemaphoreTake(modeMutex, portMAX_DELAY);
+  if (currentLockMode != None) {
+    xSemaphoreGive(modeMutex);
+    return IdleWake::None;
+  }
+
+  const auto& b = BoardConfig::ACTIVE;
+  const gpio_num_t touchIrq = static_cast<gpio_num_t>(b.touch.irq);    // GPIO21, LOW while touched
+  const gpio_num_t sideKey = static_cast<gpio_num_t>(b.input.power);   // GPIO17, HIGH while pressed
+  const gpio_num_t gate = static_cast<gpio_num_t>(b.sd.powerEnable);   // GPIO42: SD power + touch wake
+  // Keep the awake pad configuration through sleep: GPIO42 must stay driven HIGH
+  // (else the SD card loses power and the FT6336 resets), and the wake inputs
+  // keep their pulls so they can't float into spurious wakes.
+  if (gate >= 0) gpio_sleep_sel_dis(gate);
+  if (touchIrq >= 0) gpio_sleep_sel_dis(touchIrq);
+  if (sideKey >= 0) gpio_sleep_sel_dis(sideKey);
+
+  bool armed = esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(maxMs) * 1000ULL) == ESP_OK;
+  if (armed && touchIrq >= 0) armed = gpio_wakeup_enable(touchIrq, GPIO_INTR_LOW_LEVEL) == ESP_OK;
+  if (armed && sideKey >= 0) armed = gpio_wakeup_enable(sideKey, GPIO_INTR_HIGH_LEVEL) == ESP_OK;
+  if (armed) armed = esp_sleep_enable_gpio_wakeup() == ESP_OK;
+  // Don't sleep if a wake condition is already true (finger down / key held).
+  const bool wakeNow = (touchIrq >= 0 && gpio_get_level(touchIrq) == 0) || (sideKey >= 0 && gpio_get_level(sideKey) == 1);
+  const bool slept = armed && !wakeNow && esp_light_sleep_start() == ESP_OK;
+
+  if (touchIrq >= 0) gpio_wakeup_disable(touchIrq);
+  if (sideKey >= 0) gpio_wakeup_disable(sideKey);
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+  xSemaphoreGive(modeMutex);
+  if (wakeNow) return IdleWake::Input;  // a finger/key was already down
+  if (!slept) return IdleWake::None;
+  return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_GPIO ? IdleWake::Input : IdleWake::Timer;
+#else
+  (void)maxMs;
+  return IdleWake::None;
+#endif
+}
+
+HalPowerManager::LightSleepWakeReason HalPowerManager::clockLightSleep(const uint32_t seconds) const {
+#if FREEINK_DEVICE_UT37
+  const auto& b = BoardConfig::ACTIVE;
+  const gpio_num_t sideKey = static_cast<gpio_num_t>(b.input.power);  // GPIO17, HIGH while pressed
+  const gpio_num_t gate = static_cast<gpio_num_t>(b.sd.powerEnable);  // GPIO42: SD power + touch reset
+  if (seconds == 0 || sideKey < 0) return LightSleepWakeReason::Failed;
+  if (gpio_get_level(sideKey) == 1) return LightSleepWakeReason::PowerButton;
+
+  // GPIO42 LOW opens Q1 (SD card unpowered) and holds the FT6336U in reset.
+  // sleep_sel_dis keeps that awake drive through light sleep.
+  if (gate >= 0) {
+    gpio_hold_dis(gate);
+    pinMode(gate, OUTPUT);
+    digitalWrite(gate, LOW);
+    gpio_sleep_sel_dis(gate);
+  }
+  gpio_sleep_sel_dis(sideKey);
+
+  bool armed = esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(seconds) * 1000000ULL) == ESP_OK;
+  if (armed) armed = gpio_wakeup_enable(sideKey, GPIO_INTR_HIGH_LEVEL) == ESP_OK;
+  if (armed) armed = esp_sleep_enable_gpio_wakeup() == ESP_OK;
+  const esp_err_t error = armed ? esp_light_sleep_start() : ESP_FAIL;
+  const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+
+  gpio_wakeup_disable(sideKey);
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+  if (error != ESP_OK) {
+    LOG_ERR("PWR", "Clock light sleep failed: %d", static_cast<int>(error));
+    return LightSleepWakeReason::Failed;
+  }
+  return cause == ESP_SLEEP_WAKEUP_GPIO ? LightSleepWakeReason::PowerButton : LightSleepWakeReason::Timer;
+#else
+  (void)seconds;
+  return LightSleepWakeReason::Failed;
 #endif
 }
 

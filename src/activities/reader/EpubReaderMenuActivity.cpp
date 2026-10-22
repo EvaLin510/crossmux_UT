@@ -1,5 +1,6 @@
 #include "EpubReaderMenuActivity.h"
 
+#include <BoardConfig.h>
 #include <GfxRenderer.h>
 #include <HalFrontlight.h>
 #include <I18n.h>
@@ -42,7 +43,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
                                                const std::string& title, const int currentPage, const int totalPages,
                                                const int bookProgressPercent, const uint8_t currentOrientation,
                                                const uint8_t initialPageTurnRate, const bool hasFootnotes,
-                                               const bool hasBookmarks)
+                                               const bool hasBookmarks, const bool txtItems)
     : UiListActivity("EpubReaderMenu", renderer, mappedInput),
       title(title),
       pendingOrientation(currentOrientation),
@@ -50,7 +51,11 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       currentPage(currentPage),
       totalPages(totalPages),
       bookProgressPercent(bookProgressPercent) {
-  buildMenuItems(menuItems, hasFootnotes, hasBookmarks);
+  if (txtItems) {
+    buildTxtMenuItems(menuItems, hasBookmarks);
+  } else {
+    buildMenuItems(menuItems, hasFootnotes, hasBookmarks);
+  }
   buildMenuRowItems();
 }
 
@@ -69,26 +74,58 @@ void EpubReaderMenuActivity::buildMenuRowItems() {
 void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, bool hasFootnotes, bool hasBookmarks) {
   items.clear();
   items.reserve(MAX_MENU_ITEMS);
-  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
+  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_MENU_TOC});
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
   if (hasBookmarks) {
-    items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
+    items.push_back({MenuAction::BOOKMARKS, StrId::STR_MENU_BOOKMARK_LIST});
   }
-  items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
+  items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_MENU_ADD_REMOVE_BOOKMARK});
   items.push_back({MenuAction::TEXT_SETTINGS, StrId::STR_TEXT_SETTINGS});
-  items.push_back({MenuAction::NIGHT_MODE, StrId::STR_NIGHT_MODE});
-  if (Frontlight.present()) {
-    items.push_back({MenuAction::FRONTLIGHT, StrId::STR_FRONTLIGHT});
+  // Touch boards reach night mode, the light and orientation from the control
+  // center (top-edge pull-down), so the reader menu leaves them out there.
+  const bool controlCenter = BoardConfig::hasTouch();
+  if (!controlCenter) {
+    items.push_back({MenuAction::NIGHT_MODE, StrId::STR_NIGHT_MODE});
+    if (Frontlight.present()) {
+      items.push_back({MenuAction::FRONTLIGHT, StrId::STR_FRONTLIGHT});
+    }
   }
-  items.push_back({MenuAction::DICTIONARY, StrId::STR_LOOKUP});
-  items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
+  items.push_back({MenuAction::DICTIONARY, StrId::STR_MENU_DICT_LOOKUP});
+  if (!controlCenter) items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
+#if !FREEINK_DEVICE_UT37
+  // UT37 starts auto turn from the function key, the control center or a touch
+  // long-press, so the menu row is left out there.
   items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
+#endif
   items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
-  items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
-  items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
   items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
+  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
+  items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
+}
+
+void EpubReaderMenuActivity::buildTxtMenuItems(std::vector<MenuItem>& items, const bool hasBookmarks) {
+  items.clear();
+  items.reserve(MAX_MENU_ITEMS);
+  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_MENU_TOC});
+  if (hasBookmarks) {
+    items.push_back({MenuAction::BOOKMARKS, StrId::STR_MENU_BOOKMARK_LIST});
+  }
+  items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_MENU_ADD_REMOVE_BOOKMARK});
+  items.push_back({MenuAction::TEXT_SETTINGS, StrId::STR_TEXT_SETTINGS});
+  // As above: on touch boards these live in the control center.
+  if (!BoardConfig::hasTouch()) {
+    items.push_back({MenuAction::NIGHT_MODE, StrId::STR_NIGHT_MODE});
+    if (Frontlight.present()) {
+      items.push_back({MenuAction::FRONTLIGHT, StrId::STR_FRONTLIGHT});
+    }
+    items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
+  }
+  items.push_back({MenuAction::DICTIONARY, StrId::STR_MENU_DICT_LOOKUP});
+  items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
+  items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
+  // KOReader sync only: WeRead sync is for WeRead-store books, never local TXT.
   items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
 }

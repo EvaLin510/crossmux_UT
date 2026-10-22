@@ -37,7 +37,16 @@ void relayout(PreviewLayout& layout, const GfxRenderer& renderer, int fontId, in
   if (layout.lines.capacity() < maxLines) layout.lines.reserve(maxLines);
 
   BlockStyle style;
+#if FREEINK_DEVICE_UT37
+  // UT37: the narrow preview shows one line of each sample paragraph; a
+  // first-line indent or justification read as misaligned, so the sample is
+  // flush left with no indent.
+  style.alignment = CssTextAlign::Left;
+  style.textIndent = 0;
+  style.textIndentDefined = true;
+#else
   style.alignment = toCssAlign(SETTINGS.paragraphAlignment);
+#endif
   style.textAlignDefined = true;  // honor the user's choice; RTL auto-detected from text
 
   ParsedText parsed(SETTINGS.extraParagraphSpacing != 0, SETTINGS.hyphenationEnabled != 0,

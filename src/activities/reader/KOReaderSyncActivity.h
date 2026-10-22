@@ -49,6 +49,9 @@ class KOReaderSyncActivity final : public Activity, private UiAppHost {
 
   std::unique_ptr<Epub> epub;  // null until lazy-loaded after TLS in performSync()
   std::string epubPath;
+  // TXT books sync by percentage only: no Epub is loaded, and applying remote
+  // progress writes the TXT reader's byte-offset progress file.
+  bool isTxt = false;
   std::string localChapterName;
   int currentSpineIndex;
   int currentPage;
@@ -88,6 +91,8 @@ class KOReaderSyncActivity final : public Activity, private UiAppHost {
   void completeAlreadySynced();
   void ensureEpubLoaded();
   void saveProgressAndReturn(int spineIndex, int page);
+  void saveTxtProgressAndReturn(float percentage);
+  void applyRemoteProgress();
   void returnToReader();
 
   // The UiAppHost app hosts the interactive states (SHOWING_RESULT compare

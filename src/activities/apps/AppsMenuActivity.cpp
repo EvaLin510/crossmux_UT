@@ -23,21 +23,22 @@ namespace {
 enum class AppId : uint8_t {
   ReadingStats = 0,
   WeRead = 1,
-  Sudoku = 2,
-  Gomoku = 3,
-  ChineseChess = 4,
-  Minesweeper = 5,
-  Game2048 = 6,
-  UglyAvatar = 7,
+  // Removed apps keep their IDs: each is a persisted hiddenAppsMask bit, never reuse.
+  RetiredSudoku = 2,
+  RetiredGomoku = 3,
+  RetiredChineseChess = 4,
+  RetiredMinesweeper = 5,
+  RetiredGame2048 = 6,
+  RetiredUglyAvatar = 7,
   Standby = 8,
   AirPage = 9,
-  Buddy = 10,
-  Sokoban = 11,
-  PixelSwitch = 12,
+  RetiredBuddy = 10,
+  RetiredSokoban = 11,
+  RetiredPixelSwitch = 12,
   FileTransfer = 13,
   OpdsBrowser = 14,
-  Calculator = 15,
-  Woodfish = 16,
+  RetiredCalculator = 15,
+  RetiredWoodfish = 16,
   Count = 17,
 };
 
@@ -56,23 +57,17 @@ constexpr AppEntry kAppEntries[] = {
 #endif
     {AppId::AirPage, StrId::STR_AIRPAGE_TITLE, UIIcon::AirPage, &ActivityManager::goToAirPage},
     {AppId::ReadingStats, StrId::STR_READING_STATS, UIIcon::ReadingStats, &ActivityManager::goToReadingStatsMenu},
-    {AppId::Sudoku, StrId::STR_SUDOKU_TITLE, UIIcon::Sudoku, &ActivityManager::goToSudoku},
-    {AppId::Gomoku, StrId::STR_GOMOKU_TITLE, UIIcon::Gomoku, &ActivityManager::goToGomoku},
-    {AppId::Sokoban, StrId::STR_SOKOBAN_TITLE, UIIcon::Sokoban, &ActivityManager::goToSokoban},
-#ifdef ENABLE_CHINESE_VERSION
-    {AppId::ChineseChess, StrId::STR_CHINESE_CHESS_TITLE, UIIcon::ChineseChess, &ActivityManager::goToChineseChess},
-#endif
-    {AppId::Minesweeper, StrId::STR_MINESWEEPER_TITLE, UIIcon::Minesweeper, &ActivityManager::goToMinesweeper},
-    {AppId::Game2048, StrId::STR_2048_TITLE, UIIcon::Game2048, &ActivityManager::goToGame2048},
-    {AppId::UglyAvatar, StrId::STR_UGLY_AVATAR, UIIcon::Avatar, &ActivityManager::goToUglyAvatar},
-    {AppId::Buddy, StrId::STR_BUDDY_TITLE, UIIcon::Buddy, &ActivityManager::goToBuddy},
-    {AppId::PixelSwitch, StrId::STR_PIXEL_SWITCH_TITLE, UIIcon::PixelSwitch, &ActivityManager::goToPixelSwitch},
-    {AppId::Calculator, StrId::STR_CALCULATOR_TITLE, UIIcon::Calculator, &ActivityManager::goToCalculator},
-    {AppId::Woodfish, StrId::STR_WOODFISH_TITLE, UIIcon::Woodfish, &ActivityManager::goToWoodfish},
+#if !FREEINK_DEVICE_UT37
+    // UT37 replaces Standby with the Clock sleep screen.
     {AppId::Standby, StrId::STR_STANDBY_TITLE, UIIcon::Standby, &ActivityManager::goToStandby},
+#endif
 };
 
 constexpr int kAppCount = static_cast<int>(sizeof(kAppEntries) / sizeof(kAppEntries[0]));
+// Icon cells sit kGridCellPad inside their grid slot; the grid moves down so
+// the first cell keeps InxCompactLayout::contentTopGap under the header rule.
+constexpr int kGridCellPad = 4;
+constexpr int kGridTopShift = InxCompactLayout::enabled ? InxCompactLayout::contentTopGap - kGridCellPad : 0;
 
 constexpr uint32_t appBit(const AppId id) { return uint32_t{1} << static_cast<uint8_t>(id); }
 
@@ -115,27 +110,31 @@ constexpr bool appIdsAreUnique() {
 
 static_assert(kAppCount <= 32, "the app catalog must fit hiddenAppsMask");
 static_assert(static_cast<uint8_t>(AppId::Count) <= 32, "hiddenAppsMask supports at most 32 stable app IDs");
-static_assert(static_cast<uint8_t>(AppId::Buddy) == CrossPointSettings::BUDDY_APP_ID,
-              "the Buddy app ID must remain stable");
-static_assert(static_cast<uint8_t>(AppId::PixelSwitch) == CrossPointSettings::PIXEL_SWITCH_APP_ID,
-              "the Pixel Switch app ID must remain stable");
-static_assert(static_cast<uint8_t>(AppId::Calculator) == 15, "the Calculator app ID must remain stable");
-static_assert(static_cast<uint8_t>(AppId::Woodfish) == 16, "the Woodfish app ID must remain stable");
-static_assert(appBit(AppId::Woodfish) == (uint32_t{1} << 16), "Woodfish visibility must use the first widened bit");
+static_assert(static_cast<uint8_t>(AppId::RetiredBuddy) == CrossPointSettings::BUDDY_APP_ID,
+              "the retired Buddy app ID must remain stable");
+static_assert(static_cast<uint8_t>(AppId::RetiredPixelSwitch) == CrossPointSettings::PIXEL_SWITCH_APP_ID,
+              "the retired Pixel Switch app ID must remain stable");
+static_assert(static_cast<uint8_t>(AppId::RetiredSudoku) == 2, "the retired Sudoku app ID must remain stable");
+static_assert(static_cast<uint8_t>(AppId::RetiredCalculator) == 15, "the retired Calculator app ID must remain stable");
+static_assert(static_cast<uint8_t>(AppId::RetiredWoodfish) == 16, "the retired Woodfish app ID must remain stable");
 static_assert(appIdsAreUnique(), "stable app IDs must not be reused");
+// Stored masks keep the retired bits; they no longer match a menu entry.
 static_assert(CrossPointSettings::DEFAULT_HIDDEN_APPS_MASK ==
-                  (appBit(AppId::ChineseChess) | appBit(AppId::Minesweeper) | appBit(AppId::Game2048) |
-                   appBit(AppId::Buddy) | appBit(AppId::PixelSwitch)),
-              "the default mask must hide Chinese chess, Minesweeper, 2048, Buddy, and Pixel Switch");
+                  (appBit(AppId::RetiredChineseChess) | appBit(AppId::RetiredMinesweeper) |
+                   appBit(AppId::RetiredGame2048) | appBit(AppId::RetiredBuddy) | appBit(AppId::RetiredPixelSwitch)),
+              "the default mask bits must stay on the retired app IDs");
+static_assert(visibleAppCount(CrossPointSettings::DEFAULT_HIDDEN_APPS_MASK) == kAppCount,
+              "retired default-hidden bits must not hide a live app");
 static_assert(visibleAppCount(0) == kAppCount, "a zero mask must show every compiled app");
 static_assert(visibleAppCount(UINT32_MAX) == 0, "a full mask must hide every compiled app");
-static_assert(visibleAppCount(appBit(AppId::Woodfish)) == kAppCount - 1, "the widened mask must hide Woodfish");
 static_assert(visibleAppCount(effectiveHiddenMask(0, false, CrossPointSettings::ContentProfile::China)) ==
                   kAppCount - 1,
               "OPDS must be hidden when no server is configured");
+#ifdef ENABLE_CHINESE_VERSION
 static_assert(visibleAppCount(effectiveHiddenMask(0, true, CrossPointSettings::ContentProfile::Global)) ==
-                  kAppCount - 2,
-              "global profile must hide the two China-only apps");
+                  kAppCount - 1,
+              "global profile must hide the China-only WeRead app");
+#endif
 static_assert(appIndexForVisibleIndex(appBit(kAppEntries[1].id), 1) == 2,
               "visible indices must skip a hidden middle app");
 
@@ -205,8 +204,9 @@ bool AppsMenuActivity::usesIconLayout() const {
 
 int AppsMenuActivity::iconIndexFromPoint(const int x, const int y) const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int top = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int height = renderer.getScreenHeight() - top - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  const int top = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + kGridTopShift;
+  const int height =
+      renderer.getScreenHeight() - top - metrics.buttonHintsHeight - metrics.verticalSpacing;
   return InxGridGeometry::indexFromPoint(x, y - top, renderer.getScreenWidth(), height,
                                          InxGridGeometry::pageStart(nav.selected, getVisibleAppCount()),
                                          getVisibleAppCount());
@@ -264,7 +264,9 @@ void AppsMenuActivity::drawIconGrid(const Rect& rect, const int visibleCount, co
   const int cellWidth = rect.width / InxGridGeometry::columns;
   const int cellHeight = rect.height / InxGridGeometry::rows;
   const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-  constexpr int iconScale = 2;
+  // UT37's 80x87 cells can't hold a 2x (64 px) icon plus its label; draw the
+  // 32 px pixel art 1:1 there.
+  constexpr int iconScale = InxCompactLayout::enabled ? 1 : 2;
   constexpr int iconSize = InxAppIcons::size * iconScale;
 
   for (int slot = 0; slot < InxGridGeometry::itemsPerPage && start + slot < visibleCount; ++slot) {
@@ -273,17 +275,22 @@ void AppsMenuActivity::drawIconGrid(const Rect& rect, const int visibleCount, co
     if (appIndex < 0) continue;
     const int column = slot % InxGridGeometry::columns;
     const int row = slot / InxGridGeometry::columns;
-    const Rect cell{rect.x + column * cellWidth + 4, rect.y + row * cellHeight + 4, cellWidth - 8, cellHeight - 8};
+    const Rect cell{rect.x + column * cellWidth + kGridCellPad, rect.y + row * cellHeight + kGridCellPad,
+                    cellWidth - 2 * kGridCellPad, cellHeight - 2 * kGridCellPad};
     const bool isSelected = showSelection && visibleIndex == nav.selected;
-    if (isSelected) renderer.fillRect(cell.x, cell.y, cell.width, cell.height, true);
+    const bool inverted = isSelected && InxSelection::inverts;
+    if (inverted)
+      renderer.fillRect(cell.x, cell.y, cell.width, cell.height, true);
+    else if (isSelected)
+      renderer.fillRectDither(cell.x, cell.y, cell.width, cell.height, Color::LightGray);
 
     const int iconX = cell.x + (cell.width - iconSize) / 2;
     const int iconY = cell.y + std::max(5, (cell.height - iconSize - lineHeight - 8) / 2);
-    InxAppIcons::draw(renderer, kAppEntries[appIndex].icon, iconX, iconY, iconScale, isSelected);
+    InxAppIcons::draw(renderer, kAppEntries[appIndex].icon, iconX, iconY, iconScale, inverted);
     const std::string label =
         renderer.truncatedText(UI_10_FONT_ID, I18N.get(kAppEntries[appIndex].titleId), std::max(1, cell.width - 8));
     const int labelX = cell.x + (cell.width - renderer.getTextWidth(UI_10_FONT_ID, label.c_str())) / 2;
-    renderer.drawText(UI_10_FONT_ID, labelX, iconY + iconSize + 8, label.c_str(), !isSelected);
+    renderer.drawText(UI_10_FONT_ID, labelX, iconY + iconSize + 8, label.c_str(), !inverted);
   }
 
   GUI.drawSideScrollBar(renderer, rect, visibleCount, start, InxGridGeometry::itemsPerPage);
@@ -301,12 +308,15 @@ void AppsMenuActivity::buildScreen(UiScreen& screen) {
   if (visibleCount == 0) {
     UITheme::drawCenteredWrappedText(renderer, Rect{0, listY, sw, listH}, UI_12_FONT_ID, tr(STR_NO_APPS_ENABLED), 2);
   } else if (usesIconLayout()) {
-    drawIconGrid(Rect{0, listY, sw, listH}, visibleCount, showSelection);
+    drawIconGrid(Rect{0, listY + kGridTopShift, sw, listH - kGridTopShift}, visibleCount, showSelection);
   } else {
     const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-    screen.setContentMargin(fui::Insets{static_cast<int16_t>(listY), static_cast<int16_t>(sw - (safe.x + safe.width)),
-                                        static_cast<int16_t>(sh - (safe.y + safe.height)),
-                                        static_cast<int16_t>(safe.x)});
+    // Screen-absolute margins: setContentMargin() would measure them from the
+    // safe area and push the rows down by its top inset.
+    screen.setContentMarginFromScreen(
+        fui::Insets{static_cast<int16_t>(listY + InxCompactLayout::contentTopGap),
+                    static_cast<int16_t>(sw - (safe.x + safe.width)), static_cast<int16_t>(sh - (safe.y + safe.height)),
+                    static_cast<int16_t>(safe.x)});
     fui::ListProps props;
     props.items = rowItems.data();
     props.count = static_cast<uint16_t>(rowItems.size());

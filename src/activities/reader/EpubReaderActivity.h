@@ -15,7 +15,6 @@
 #include "ProgressMapper.h"
 #include "ReaderActivity.h"
 #include "ReaderFontPreview.h"
-#include "ReaderToolbarUi.h"
 #include "components/OptionPopup.h"
 
 class EpubReaderActivity final : public ReaderActivity {
@@ -36,13 +35,20 @@ class EpubReaderActivity final : public ReaderActivity {
   int8_t pendingManualTurn = 0;
   bool pendingPercentJump = false;
   float pendingSpineProgress = 0.0f;
-  bool pendingScreenshot = false;
   bool pendingSyncSaveError = false;
   bool pendingSyncLaunchError = false;
   uint8_t pageLoadRetryCount = 0;
   static constexpr uint8_t MAX_PAGE_LOAD_RETRIES = 3;
   bool skipNextButtonCheck = false;
   bool automaticPageTurnActive = false;
+  // Rolling auto page turn (UT37): the next page replaces the current one line
+  // by line from the top over the turn interval. rollEpoch is the
+  // lastPageTurnTime the current roll started from; a different value means the
+  // page changed and the roll restarts.
+  unsigned long rollEpoch = 0UL;
+  uint8_t rollStep = 0;
+  uint8_t rollLineCount = 0;
+  bool rollSupported = true;
   bool showBookmarkMessage = false;
   bool showDictionaryMessage = false;
   unsigned long dictionaryMessageTime = 0UL;
@@ -63,40 +69,12 @@ class EpubReaderActivity final : public ReaderActivity {
   bool maybeOfferCompleteChineseFont();
 #endif
 
-  // Toolbar reader menu (SETTINGS.readerMenuStyle == READER_MENU_TOOLBAR): drawn
-  // over the page instead of pushing the full-screen list menu. Select opens the
-  // Toolbar; its tools open the Contents/Text/More bottom-sheet panels.
-  enum class Overlay { None, Toolbar, Contents, Text, More };
-  Overlay overlay = Overlay::None;
-  int focusedTool = 0;  // toolbar tool focus: 0=Contents, 1=Text, 2=More
-  int panelIndex = 0;   // selected row within the active panel
-  // Panel list navigation: a tap steps one row, a hold jumps PANEL_HOLD_STEP rows in one go
-  // (a contents list runs to hundreds of chapters). One jump per hold, not a repeat -- every
-  // step repaints the panel, so repeating is bounded by the e-ink refresh anyway and reads as
-  // sluggish. True once a hold has jumped, so the release that ends it is swallowed.
-  static constexpr unsigned long PANEL_HOLD_MS = 1500;
-  static constexpr int PANEL_HOLD_STEP = 10;
-  bool panelHoldJumped = false;
-  // Whether the panel draws its cursor row. Button boards always do; touch
-  // boards only once a button has moved it, so a tapped row is not left inverted.
-  bool panelCursorShown = false;
-  // FreeInkUI chrome + tap targets for the overlay; created when it opens,
-  // released when it closes.
-  std::unique_ptr<ReaderToolbarUi> toolbarUi;
-  // Modal option picker over the panel (same component the Settings screens
-  // use), for enum rows: font size / line spacing / alignment / orientation /
-  // auto page turn. Toggle rows stay one-tap toggles, as in Settings.
+  // Modal option picker for the SD font preload prompt.
   OptionPopup overlayPopup;
   ReaderFontPreview fontPreview;
   enum class FontPromptState { Idle, Asking, Accepted };
   FontPromptState fontPromptState = FontPromptState::Idle;
   bool fontPromptWaitForBackRelease = false;
-  // True while a clean-page snapshot (renderer.storeBwBuffer) backs the open
-  // overlay, letting panel->toolbar steps restore the page without a full
-  // re-render. Discarded on close / whenever the page under the overlay changes.
-  bool overlayPageStored = false;
-  int autoTurnOption = 0;  // current auto page-turn rate index (More panel)
-  std::vector<EpubReaderMenuActivity::MenuItem> moreItems;
 
   // Footnote support
   FootnoteList currentPageFootnotes;
@@ -151,32 +129,13 @@ class EpubReaderActivity final : public ReaderActivity {
   void jumpToPercent(int percent);
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   void openReaderMenu();
-  // Toolbar reader menu (see Overlay above).
-  bool usesToolbarMenu() const;
-  void openOverlay(Overlay target);
-  void closeOverlayToPage();
-  void discardOverlayPage();
-  void handleOverlayInput();
-  void renderOverlay();
-  std::string currentChapterTitle() const;
-  // Text panel rows (font, size, line spacing, alignment, focus reading).
-  std::string textRowName(int row) const;
-  std::string textRowValue(int row) const;
-  void showTextRowPopup(int row);
-  // Persist + re-paginate + re-render under the open panel (live preview).
-  void applyTextSettingLive();
-  void paintOverlayPopup();
-  // Persist the reader text settings, (re)load the selected SD font, and
-  // re-paginate the current chapter so changes apply without re-opening the book.
-  void applyReaderTextSettings();
+  // Back from a screen opened by a touch long-press returns to the page, not the menu.
+  void reopenMenuAfterCancel();
+  void runTouchLongPress(uint8_t action);
+  bool openedFromShortcut = false;
   void finishFontPreview();
   void handleFontPreloadPrompt();
   void render(RenderLock&& lock) override;
-  // More panel rows.
-  void buildMoreActions();
-  std::string moreRowName(int row) const;
-  std::string moreRowValue(int row) const;
-  void activateMoreRow(int row);
   void openDictionaryWordSelect();
   bool launchKOReaderSync();
 #ifdef ENABLE_CHINESE_VERSION
@@ -184,6 +143,15 @@ class EpubReaderActivity final : public ReaderActivity {
 #endif
   unsigned long confirmLongPressThreshold() const;
   void toggleAutoPageTurn(uint8_t requestedPageTurnRate);
+  // Stop auto turn here and in the control center (util/AutoPageTurn.h).
+  void stopAutoPageTurn();
+  // Follow a start/stop or speed change made in the control center.
+  void syncAutoPageTurn();
+  // Rolling timer step; returns false when this page must turn as a whole.
+  bool handleRollingAutoTurn();
+  // Draws one rolling frame; false (and rolling off for this page) when the
+  // next page is in another chapter or either page has images.
+  bool renderRollingFrame(int marginTop, int marginRight, int marginBottom, int marginLeft);
   void loadCachedBookmarks();
   void addBookmark();
   void updateBookmarkFlag();
@@ -227,6 +195,5 @@ class EpubReaderActivity final : public ReaderActivity {
   bool preventAutoSleep() override { return automaticPageTurnActive; }
   bool deferBluetoothStart() const override;
 
-  ScreenshotInfo getScreenshotInfo() const override;
   CrossPointPosition getCurrentPosition() const;
 };

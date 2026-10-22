@@ -2,6 +2,8 @@
 
 #include <Logging.h>
 
+#include "FrontlightLevels.h"
+
 HalFrontlight& HalFrontlight::getInstance() {
   static HalFrontlight instance;
   return instance;
@@ -11,7 +13,7 @@ void HalFrontlight::begin(const uint8_t brightness, const uint8_t warmth, const 
   manager.begin();
   if (!manager.present()) return;
 
-  lastBrightness = brightness > 100 ? 100 : brightness;
+  lastBrightness = frontlight_levels::normalize(brightness);
   manager.setColorTemperature(warmth > 100 ? 100 : warmth);
   lit = on;
   manager.setBrightness(lit ? lastBrightness : 0);
@@ -19,7 +21,7 @@ void HalFrontlight::begin(const uint8_t brightness, const uint8_t warmth, const 
 }
 
 void HalFrontlight::setBrightness(const uint8_t percent) {
-  lastBrightness = percent > 100 ? 100 : percent;
+  lastBrightness = frontlight_levels::normalize(percent);
   if (lit) manager.setBrightness(lastBrightness);
 }
 

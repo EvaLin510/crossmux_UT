@@ -27,7 +27,6 @@ class DateTimeSettingsActivity final : public Activity, private UiAppHost {
     DateTime,
     TimeZone,
     Hour24,
-    SyncNow,
     Count,
   };
 

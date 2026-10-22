@@ -7,6 +7,11 @@
 #include <HalClock.h>
 #include <HalDisplay.h>
 #include <HalFrontlight.h>
+#if FREEINK_DEVICE_UT37
+#include <esp_attr.h>
+
+#include "util/AutoPageTurn.h"
+#endif
 #include <HalGPIO.h>
 #include <HalOtaSlot.h>
 #include <HalPowerManager.h>
@@ -28,7 +33,6 @@
 
 #include <cstring>
 
-#include "AchievementsStore.h"
 #include "BleInput.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -40,6 +44,7 @@
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/boot_sleep/SleepActivity.h"
 #ifdef ENABLE_CHINESE_VERSION
 #include "activities/settings/FontDownloadActivity.h"
 #include "activities/settings/TextSettingsActivity.h"
@@ -52,7 +57,7 @@
 #include "images/LoadingIcon.h"
 #include "platform/UsbSerialJtagHandoff.h"
 #include "util/ButtonNavigator.h"
-#include "util/ScreenshotUtil.h"
+#include "util/SleepClock.h"
 
 #if CROSSPOINT_CAP_SOUND_FEEDBACK
 #include <SoundFeedback.h>
@@ -122,7 +127,14 @@ static bool wakePowerReleasePending = false;
 // Fonts
 // All legacy built-in reader IDs share one 12pt offline fallback. Complete
 // families, other sizes, and style variants come from SD .cpfont files.
+#if CROSSMUX_BITMAP_UI_FONT
+// UT37: a built-in 16 px WenQuanYi strike (common Traditional + Simplified +
+// all non-CJK, ~200 KB) is the reader font whenever no SD-card font is in use,
+// instead of notosans_cjk_12.
+EpdFont offlineReaderFont(&wqy_zhenghei_16);
+#else
 EpdFont offlineReaderFont(&notosans_cjk_12);
+#endif
 EpdFontFamily offlineReaderFontFamily(&offlineReaderFont);
 
 // International UI fonts remain primary; CJK subsets are selected only when
@@ -138,19 +150,29 @@ EpdFont ui12MediumFont(&ubuntu_12_medium);
 EpdFont ui12BoldFont(&ubuntu_12_bold);
 EpdFontFamily ui12FontFamily(&ui12MediumFont, &ui12BoldFont);
 
+#if CROSSMUX_BITMAP_UI_FONT
+// 1-bit WenQuanYi bitmap faces replace every UI string they cover (see all.h);
+// sizes are matched by pixels (13/14/15 px CJK cells), not point size.
+EpdFont cjk8Font(&wqy_zhenghei_10);
+EpdFontFamily cjk8FontFamily(&cjk8Font);
+EpdFont cjk10Font(&wqy_zhenghei_12);
+EpdFontFamily cjk10FontFamily(&cjk10Font);
+EpdFont cjk12Font(&wqy_zhenghei_14);
+EpdFontFamily cjk12FontFamily(&cjk12Font);
+constexpr bool kCjkUiReplacesPrimary = true;
+#else
 EpdFont cjk8Font(&notosans_cjk_8);
 EpdFontFamily cjk8FontFamily(&cjk8Font);
 EpdFont cjk10Font(&notosans_cjk_10);
 EpdFontFamily cjk10FontFamily(&cjk10Font);
 EpdFont cjk12Font(&notosans_cjk_12);
 EpdFontFamily cjk12FontFamily(&cjk12Font);
+constexpr bool kCjkUiReplacesPrimary = false;
+#endif
 constexpr int CJK_UI_8_FONT_ID = 0x434A4B08;
 constexpr int CJK_UI_10_FONT_ID = 0x434A4B0A;
 constexpr int CJK_UI_12_FONT_ID = 0x434A4B0C;
 
-// Chinese chess piece glyphs (subset CJK font, 14 characters at 16pt).
-EpdFont chineseChessPieceFont(&chinese_chess_16);
-EpdFontFamily chineseChessPieceFontFamily(&chineseChessPieceFont);
 
 // measurement of power button press duration calibration value
 unsigned long t1 = 0;
@@ -306,6 +328,132 @@ static bool loadSleepFrameBuffer() {
 }
 
 // Enter deep sleep mode
+#if FREEINK_DEVICE_UT37
+// Function-key "power off": a deep sleep that only a long press wakes from.
+// RTC memory survives deep sleep and is cleared by a real power-on/reset.
+RTC_DATA_ATTR static bool ut37PoweredOff = false;
+static bool ut37LongPressFired = false;
+void enterDeepSleep(bool fromTimeout);
+// Set by the "Clock" sleep loop right before it restarts on a side-key press;
+// setup() then resumes exactly like a deep-sleep wake. RTC_NOINIT survives
+// ESP.restart() and is garbage after power-on, hence the magic value.
+RTC_NOINIT_ATTR static uint32_t ut37ClockWakeMagic;
+constexpr uint32_t UT37_CLOCK_WAKE_MAGIC = 0xC10C4A4E;
+void ut37PowerOff() {
+  ut37PoweredOff = true;
+  SleepActivity::setPowerOffScreen(true);
+  enterDeepSleep(false);
+}
+
+// Short and long press share one action list (Settings > function key).
+enum class Ut37KeyAction : uint8_t { Sleep, PowerOff, FrontlightPanel, AutoTurn, Bluetooth, Footnotes, None };
+
+Ut37KeyAction ut37ShortAction() {
+  switch (SETTINGS.shortPwrBtn) {
+    case CrossPointSettings::SHORT_PWRBTN::SLEEP:
+      return Ut37KeyAction::Sleep;
+    case CrossPointSettings::SHORT_PWRBTN::POWER_OFF:
+      return Ut37KeyAction::PowerOff;
+    case CrossPointSettings::SHORT_PWRBTN::KEY_FRONTLIGHT:
+      return Ut37KeyAction::FrontlightPanel;
+    case CrossPointSettings::SHORT_PWRBTN::KEY_AUTO_TURN:
+      return Ut37KeyAction::AutoTurn;
+    case CrossPointSettings::SHORT_PWRBTN::KEY_BLUETOOTH:
+      return Ut37KeyAction::Bluetooth;
+    case CrossPointSettings::SHORT_PWRBTN::FOOTNOTES:
+      return Ut37KeyAction::Footnotes;
+    default:
+      return Ut37KeyAction::None;
+  }
+}
+
+Ut37KeyAction ut37LongAction() {
+  switch (SETTINGS.longPwrBtn) {
+    case CrossPointSettings::LONG_SLEEP:
+      return Ut37KeyAction::Sleep;
+    case CrossPointSettings::LONG_POWER_OFF:
+      return Ut37KeyAction::PowerOff;
+    case CrossPointSettings::LONG_FRONTLIGHT:
+      return Ut37KeyAction::FrontlightPanel;
+    case CrossPointSettings::LONG_AUTO_TURN:
+      return Ut37KeyAction::AutoTurn;
+    case CrossPointSettings::LONG_BLUETOOTH:
+      return Ut37KeyAction::Bluetooth;
+    case CrossPointSettings::LONG_FOOTNOTES:
+      return Ut37KeyAction::Footnotes;
+    default:
+      return Ut37KeyAction::None;
+  }
+}
+
+// Returns true when the action put the device to sleep (caller must return).
+bool ut37RunKeyAction(const Ut37KeyAction action) {
+  switch (action) {
+    case Ut37KeyAction::Sleep:
+      enterDeepSleep(false);
+      return true;
+    case Ut37KeyAction::PowerOff:
+      ut37PowerOff();
+      return true;
+    case Ut37KeyAction::FrontlightPanel:
+      Frontlight.setOn(!Frontlight.isOn());
+      SETTINGS.frontlightOn = Frontlight.isOn() ? 1 : 0;
+      SETTINGS.saveToFile();
+      return false;
+    case Ut37KeyAction::AutoTurn:
+      auto_page_turn::setActive(!auto_page_turn::isActive());
+      activityManager.requestUpdate();
+      return false;
+    case Ut37KeyAction::Bluetooth: {
+      SETTINGS.bluetoothEnabled = SETTINGS.bluetoothEnabled ? 0 : 1;
+      SETTINGS.saveToFile();
+      if (SETTINGS.bluetoothEnabled) {
+        bleinput::StartResult result;
+        {
+          RenderLock lock;
+          result = bleinput::ensureStarted(renderer, bleinput::StartContext::Explicit);
+        }
+        if (result != bleinput::StartResult::Started && result != bleinput::StartResult::AlreadyRunning) {
+          LOG_ERR("MAIN", "Bluetooth start failed (%u)", static_cast<unsigned>(result));
+        }
+      } else {
+        bleinput::stop();
+      }
+      return false;
+    }
+    case Ut37KeyAction::Footnotes:  // consumed by the EPUB reader (short release / long press)
+    case Ut37KeyAction::None:
+    default:
+      return false;
+  }
+}
+
+// "Clock" sleep screen. Deep sleep would lose the panel RAM and cold-boot every
+// minute, so instead light-sleep with the SD card and touch powered off
+// (HalPowerManager::clockLightSleep) and repaint the clock on each new minute;
+// the panel holds the picture in between. A side-key press restarts the chip
+// and setup() resumes the reader/home the same way it does after a deep sleep.
+[[noreturn]] static void runUt37ClockSleep() {
+  Storage.prepareForDeepSleep();  // flush and release the card before its rail drops
+  LOG_DBG("MAIN", "Entering clock sleep");
+  while (true) {
+    const auto wake = powerManager.clockLightSleep(sleep_clock::secondsUntilNextMinute());
+    if (wake == HalPowerManager::LightSleepWakeReason::PowerButton) break;
+    if (wake == HalPowerManager::LightSleepWakeReason::Failed) delay(1000);  // don't spin if sleep can't arm
+    bool cleanGhosting = false;
+    if (sleep_clock::tick(cleanGhosting)) {
+      RenderLock lock;
+      sleep_clock::draw(renderer, cleanGhosting);
+    }
+  }
+  LOG_DBG("MAIN", "Clock sleep: side key, restarting to resume");
+  ut37ClockWakeMagic = UT37_CLOCK_WAKE_MAGIC;
+  ESP.restart();
+  while (true) {
+  }
+}
+#endif
+
 void enterDeepSleep(bool fromTimeout = false) {
   bleinput::stop();
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
@@ -329,9 +477,6 @@ void enterDeepSleep(bool fromTimeout = false) {
   if (!READING_STATS.saveToFile()) {
     LOG_ERR("RST", "Failed to save reading stats before deep sleep");
   }
-  if (!ACHIEVEMENTS.saveToFile()) {
-    LOG_ERR("ACH", "Failed to save achievements before deep sleep");
-  }
 
   if (isQuickResumeSleep) {
     saveSleepFrameBuffer();
@@ -354,6 +499,10 @@ void enterDeepSleep(bool fromTimeout = false) {
   Frontlight.setOn(false);
 #if CROSSPOINT_CAP_SOUND_FEEDBACK
   SoundFeedback::shutdown();
+#endif
+#if FREEINK_DEVICE_UT37
+  // Power off never runs the clock: it is the zero-activity state.
+  if (!ut37PoweredOff && SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::CLOCK) runUt37ClockSleep();
 #endif
   display.deepSleep();
 #if !FREEINK_DEVICE_EEGO_A4
@@ -409,11 +558,10 @@ bool setupDisplayAndFonts(bool seamless = false, bool logSdFontLoadHeap = false)
   renderer.insertFont(CJK_UI_8_FONT_ID, cjk8FontFamily);
   renderer.insertFont(CJK_UI_10_FONT_ID, cjk10FontFamily);
   renderer.insertFont(CJK_UI_12_FONT_ID, cjk12FontFamily);
-  renderer.setFallbackFont(SMALL_FONT_ID, CJK_UI_8_FONT_ID);
-  renderer.setFallbackFont(UI_10_FONT_ID, CJK_UI_10_FONT_ID);
-  renderer.setFallbackFont(UI_12_FONT_ID, CJK_UI_12_FONT_ID);
+  renderer.setFallbackFont(SMALL_FONT_ID, CJK_UI_8_FONT_ID, kCjkUiReplacesPrimary);
+  renderer.setFallbackFont(UI_10_FONT_ID, CJK_UI_10_FONT_ID, kCjkUiReplacesPrimary);
+  renderer.setFallbackFont(UI_12_FONT_ID, CJK_UI_12_FONT_ID, kCjkUiReplacesPrimary);
   renderer.insertFont(BaseTheme::STATUS_NUMERIC_FONT_ID, smallFontFamily);
-  renderer.insertFont(CHINESE_CHESS_FONT_ID, chineseChessPieceFontFamily);
 
   // Discover and load SD card fonts
   if (logSdFontLoadHeap) {
@@ -527,6 +675,12 @@ void setup() {
   silentRebootMagic = 0;
   silentRebootTarget = 0;
   silentRebootFontPointSize = 0;
+#if FREEINK_DEVICE_UT37
+  const bool isClockSleepWake = ut37ClockWakeMagic == UT37_CLOCK_WAKE_MAGIC;
+  ut37ClockWakeMagic = 0;
+#else
+  constexpr bool isClockSleepWake = false;
+#endif
 #ifdef ENABLE_CHINESE_VERSION
   if (snapshotTarget == SilentRebootTarget::ReaderSuppressFontPrompt ||
       snapshotTarget == SilentRebootTarget::ReaderPreloadChineseFont) {
@@ -588,7 +742,6 @@ void setup() {
 
   HalSystem::checkPanic();
 
-  if (gpio.hasTouch()) SETTINGS.readerMenuStyle = CrossPointSettings::READER_MENU_TOOLBAR;
   const bool settingsLoaded = SETTINGS.loadFromFile();
   const auto onboardingMode =
       settingsLoaded ? LanguageSelectActivity::Mode::Upgrade : LanguageSelectActivity::Mode::Initial;
@@ -598,12 +751,13 @@ void setup() {
 #endif
   halClock.setAutoSyncEnabled(SETTINGS.clockAutoSync != 0);
   APP_STATE.loadFromFile();
-  const bool isSleepWake = wakeupReason == HalGPIO::WakeupReason::PowerButton;
+  // A side key ending the Clock sleep screen restarts the chip (software reset),
+  // but it resumes exactly like a deep-sleep wake.
+  const bool isSleepWake = wakeupReason == HalGPIO::WakeupReason::PowerButton || isClockSleepWake;
   const bool isPersistedSleepWake = isSleepWake && !APP_STATE.showBootScreen;
 
   RECENT_BOOKS.loadFromFile();
   READING_STATS.loadFromFile();
-  ACHIEVEMENTS.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
@@ -629,6 +783,17 @@ void setup() {
         Storage.prepareForDeepSleep();
         powerManager.startDeepSleep(gpio);
       }
+#if FREEINK_DEVICE_UT37
+      // Powered off from the function key: only a long press turns it back on.
+      if (ut37PoweredOff) {
+        if (!gpio.verifyPowerButtonWakeup(MappedInputManager::FUNCTION_KEY_LONG_PRESS_MS, false)) {
+          LOG_DBG("MAIN", "Powered off: wake press too short, back to sleep");
+          Storage.prepareForDeepSleep();
+          powerManager.startDeepSleep(gpio);
+        }
+        ut37PoweredOff = false;
+      }
+#endif
 #endif
       wakePowerReleasePending = true;
       break;
@@ -658,6 +823,10 @@ void setup() {
     default:
       break;
   }
+
+  // The side key that ended the Clock sleep screen is still down: let its
+  // release pass like a deep-sleep wake press instead of acting on it.
+  if (isClockSleepWake) wakePowerReleasePending = true;
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
   LOG_DBG("MAIN", "Starting CrossPoint version " CROSSPOINT_VERSION);
@@ -713,7 +882,14 @@ void setup() {
         }
         break;
       case BootResume::Splash:
+#if FREEINK_DEVICE_UT37
+        // UT37 cold boot: skip the splash refresh and paint Home (or the book)
+        // straight away. The first UT37 frame after reset already runs the 5S
+        // full clear, so the splash only added one more ~1.9 s waveform.
+        needsWakeRefresh = true;
+#else
         activityManager.goToBoot();
+#endif
         break;
     }
   }
@@ -819,8 +995,8 @@ void loop() {
 #endif
 
   if (activityManager.requiresExclusiveStorageLoop()) {
-    // USB Drive handed the raw SD card to the host. Do not run screenshots,
-    // sleep, shortcuts, or normal navigation while its filesystem is detached.
+    // USB Drive handed the raw SD card to the host. Do not run sleep,
+    // shortcuts, or normal navigation while its filesystem is detached.
     activityManager.loop();
     if (activityManager.preventAutoSleep()) {
       powerManager.setPowerSaving(false);
@@ -880,30 +1056,6 @@ void loop() {
     return;
   }
 
-  static bool screenshotButtonsReleased = true;
-  static bool screenshotComboActive = false;
-  if (gpio.isPressed(HalGPIO::BTN_POWER) && gpio.isPressed(HalGPIO::BTN_DOWN)) {
-    screenshotComboActive = true;
-    if (screenshotButtonsReleased) {
-      screenshotButtonsReleased = false;
-      {
-        RenderLock lock;
-        ScreenshotUtil::takeScreenshot(renderer);
-      }
-    }
-    return;
-  }
-  if (screenshotComboActive) {
-    if (gpio.isPressed(HalGPIO::BTN_POWER)) return;
-    if (gpio.wasReleased(HalGPIO::BTN_POWER)) {
-      screenshotButtonsReleased = true;
-      screenshotComboActive = false;
-      return;
-    }
-    screenshotButtonsReleased = true;
-    screenshotComboActive = false;
-  }
-
   if (handleX4ProFrontlightDoubleClick()) return;
 
 #if FREEINK_CAP_TOUCH
@@ -923,17 +1075,29 @@ void loop() {
     return;
   }
 
+#if FREEINK_DEVICE_UT37
+  // Function key (UT37's only key): a hold past FUNCTION_KEY_LONG_PRESS_MS runs
+  // the long-press action once; a shorter press runs the short-press action on
+  // release (MappedInputManager swallows the release that ends a long press).
+  if (!gpio.isPressed(HalGPIO::BTN_POWER)) ut37LongPressFired = false;
+  if (millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) && !ut37LongPressFired &&
+      gpio.getPowerButtonHeldTime() >= MappedInputManager::FUNCTION_KEY_LONG_PRESS_MS) {
+    ut37LongPressFired = true;
+    LOG_DBG("MAIN", "Function key long press -> action %u", static_cast<unsigned>(SETTINGS.longPwrBtn));
+    if (ut37RunKeyAction(ut37LongAction())) return;
+  }
+  if (millis() >= allowSleepAt && mappedInputManager.wasReleased(MappedInputManager::Button::Power)) {
+    if (ut37RunKeyAction(ut37ShortAction())) return;
+  }
+#else
   if (millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
       gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration()) {
-    // If the screenshot combination is potentially being pressed, don't sleep
-    if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
-      return;
-    }
     LOG_DBG("MAIN", "Power button held %lums, sleeping", gpio.getPowerButtonHeldTime());
     enterDeepSleep();
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
     return;
   }
+#endif
 
 #if FREEINK_DEVICE_PAPERMONO
   // Paper Mono reports the PMIC power button as a one-tick click, so the held
@@ -984,9 +1148,6 @@ void loop() {
     if (!READING_STATS.saveToFile()) {
       LOG_ERR("RST", "Failed to save reading stats after reader exit");
     }
-    if (!ACHIEVEMENTS.saveToFile()) {
-      LOG_ERR("ACH", "Failed to save achievements after reader exit");
-    }
   } else if (readerIsActive && (millis() - lastActivityTime) >= READING_STATS_CHECKPOINT_IDLE_MS &&
              !activityManager.skipLoopDelay() && !activityManager.preventAutoSleep() &&
              READING_STATS.shouldSaveCheckpoint()) {
@@ -995,6 +1156,33 @@ void loop() {
       LOG_ERR("RST", "Failed to save idle reading checkpoint");
     }
   }
+
+#if FREEINK_DEVICE_UT37
+  // The SD socket has no card-detect pin. Without this, a card pulled and
+  // pushed back while powered stays on the stale mount and every later save
+  // (reader progress included) fails silently until a reboot. A reinsert
+  // restarts so fonts, caches and open files all come from the new mount;
+  // the reader reopens at the last progress that reached the card.
+  static unsigned long nextSdPollAt = 0;
+  if (!deepSleepInProgress && static_cast<long>(millis() - nextSdPollAt) >= 0) {
+    nextSdPollAt = millis() + 2000;
+    switch (Storage.pollCardChange()) {
+      case SdCardChange::Removed:
+        LOG_INF("MAIN", "SD card removed; restarting once it is reinserted");
+        break;
+      case SdCardChange::Reinserted:
+        LOG_INF("MAIN", "SD card reinserted; restarting to remount");
+        if (activityManager.isReaderActivity()) {
+          silentRestartToReader(true);
+        } else {
+          restartToHomeAfterStorageHandoff();
+        }
+        break;
+      case SdCardChange::None:
+        break;
+    }
+  }
+#endif
 
   const unsigned long loopDuration = millis() - loopStartTime;
   if (loopDuration > maxLoopDuration) {
@@ -1014,6 +1202,31 @@ void loop() {
     if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
       // If we've been inactive for a while, increase the delay to save power
       powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
+#if FREEINK_DEVICE_UT37
+      // Reading is mostly idle time between page turns: light-sleep the SoC instead
+      // of spinning at 80 MHz. Skipped while something must keep running (auto page
+      // turn, standby clock, transfers) or Bluetooth is on; HalPowerManager also
+      // refuses during renders, WiFi, a lit frontlight or an attached USB host.
+      // The FT6336 signals a held touch with short INT pulses, not a level; the
+      // wake is one of them. After a touch/key wake, stay awake and poll every
+      // 10 ms for a while so the gesture that woke us is tracked to its release
+      // before sleeping again; otherwise taps go unanswered.
+      constexpr uint32_t UT37_IDLE_SLEEP_MAX_MS = 15000;
+      constexpr unsigned long UT37_AWAKE_AFTER_INPUT_MS = 3000;
+      static unsigned long ut37AwakeUntil = 0;
+      if (static_cast<long>(millis() - ut37AwakeUntil) < 0) {
+        delay(10);
+        return;
+      }
+      if (!activityManager.preventAutoSleep() && !SETTINGS.bluetoothEnabled) {
+        const auto wake = powerManager.idleLightSleep(UT37_IDLE_SLEEP_MAX_MS);
+        if (wake == HalPowerManager::IdleWake::Input) {
+          ut37AwakeUntil = millis() + UT37_AWAKE_AFTER_INPUT_MS;
+          return;
+        }
+        if (wake == HalPowerManager::IdleWake::Timer) return;
+      }
+#endif
       delay(50);
     } else {
       // Short delay to prevent tight loop while still being responsive

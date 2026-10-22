@@ -5,6 +5,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <JpegToBmpConverter.h>
 #include <PngToBmpConverter.h>
 
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include "fontIds.h"
 
 namespace {
+// PNG and JPEG are both converted once into this BMP preview on open.
 constexpr const char* PNG_PREVIEW_PATH = "/.crosspoint/image_preview.bmp";
 constexpr const char* TRANSPARENT_PREVIEW_PATH = "/.crosspoint/image_preview.transparent.bmp";
 constexpr const char* SLEEP_IMAGE_PATH = "/sleep.bmp";
@@ -25,6 +27,25 @@ Rect sleepCoverActionRect(const GfxRenderer& renderer) {
   return Rect(metrics.contentSidePadding,
               renderer.getScreenHeight() - metrics.contentSidePadding - metrics.menuRowHeight,
               renderer.getScreenWidth() - metrics.contentSidePadding * 2, metrics.menuRowHeight);
+}
+
+// Decodes the JPEG once into a full-screen BMP so paging and the sleep cover
+// reuse it instead of re-decoding. UT37 has no grayscale waveform, so it gets
+// 1-bit dithering from the full-tone source (a 2-bit BMP shows posterized).
+bool jpegToPreview(const char* sourcePath) {
+  HalFile input;
+  HalFile output;
+  if (!Storage.openFileForRead("IMAGE", sourcePath, input) ||
+      !Storage.openFileForWrite("IMAGE", PNG_PREVIEW_PATH, output)) {
+    return false;
+  }
+#if FREEINK_DEVICE_UT37
+  const bool converted = JpegToBmpConverter::jpegFileTo1BitBmpStream(input, output, /*crop=*/false);
+#else
+  const bool converted = JpegToBmpConverter::jpegFileToBmpStream(input, output, /*crop=*/false);
+#endif
+  output.flush();
+  return converted;
 }
 }  // namespace
 
@@ -50,7 +71,8 @@ void ImageViewerActivity::loadSiblingImages() {
       file.getName(name, sizeof(name));
       if (name[0] != '.') {
         std::string fname(name);
-        if (FsHelpers::hasBmpExtension(fname) || FsHelpers::hasPngExtension(fname)) {
+        if (FsHelpers::hasBmpExtension(fname) || FsHelpers::hasPngExtension(fname) ||
+            FsHelpers::hasJpgExtension(fname)) {
           siblingImages.push_back(fname);
         }
       }
@@ -81,12 +103,14 @@ void ImageViewerActivity::onEnter() {
   Rect popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   GUI.fillPopupProgress(renderer, popupRect, 20);  // Initial 20% progress
   const bool png = isPng();
-  bool prepared = !png;
-  if (png && Storage.ensureDirectoryExists("/.crosspoint")) {
+  const bool jpg = FsHelpers::hasJpgExtension(filePath);
+  bool prepared = !png && !jpg;
+  if ((png || jpg) && Storage.ensureDirectoryExists("/.crosspoint")) {
     GfxRenderer::FrameBufferLoan loan(renderer);
-    prepared = PngToBmpConverter::pngFileToBmpFile(filePath.c_str(), PNG_PREVIEW_PATH, true);
+    prepared = png ? PngToBmpConverter::pngFileToBmpFile(filePath.c_str(), PNG_PREVIEW_PATH, true)
+                   : jpegToPreview(filePath.c_str());
   }
-  const char* bitmapPath = png ? PNG_PREVIEW_PATH : filePath.c_str();
+  const char* bitmapPath = (png || jpg) ? PNG_PREVIEW_PATH : filePath.c_str();
   HalFile file;
   // 1. Open the file
   if (!prepared) {
@@ -240,6 +264,10 @@ void ImageViewerActivity::doSetSleepCover(const char* sourcePath, const bool tra
 }
 
 void ImageViewerActivity::showSleepCoverOptions() {
+  if (FsHelpers::hasJpgExtension(filePath)) {
+    doSetSleepCover(PNG_PREVIEW_PATH, false);
+    return;
+  }
   if (!isPng()) {
     doSetSleepCover(filePath.c_str(), false);
     return;

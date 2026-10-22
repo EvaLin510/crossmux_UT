@@ -14,10 +14,15 @@
 #include "components/SelectionCursorPolicy.h"
 #include "components/themes/BaseTheme.h"
 #include "components/themes/inx/InxTheme.h"
+#include "components/themes/lyra/LyraTheme.h"
+// UT37 is locked to Inx (CrossPointSettings::enforceBoardTheme), so the other
+// themes stay out of its image. Inx derives from Lyra, and BaseTheme is the
+// out-of-memory fallback, so those two remain.
+#if !FREEINK_DEVICE_UT37
 #include "components/themes/lyra/Lyra3CoversTheme.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
-#include "components/themes/lyra/LyraTheme.h"
 #include "components/themes/roundedraff/RoundedRaffTheme.h"
+#endif
 
 UITheme UITheme::instance;
 
@@ -39,6 +44,7 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
       LOG_DBG("UI", "Using Classic theme");
       nextTheme = makeUniqueNoThrow<BaseTheme>();
       break;
+#if !FREEINK_DEVICE_UT37
     case CrossPointSettings::UI_THEME::LYRA:
       LOG_DBG("UI", "Using Lyra theme");
       nextTheme = makeUniqueNoThrow<LyraTheme>();
@@ -59,6 +65,7 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
       nextTheme = makeUniqueNoThrow<LyraCarouselTheme>();
       nextMetrics = &LyraCarouselMetrics::values;
       break;
+#endif
     case CrossPointSettings::UI_THEME::INX:
       LOG_DBG("UI", "Using INX theme");
       nextTheme = makeUniqueNoThrow<InxTheme>();
@@ -195,6 +202,19 @@ int UITheme::getStatusBarHeight() {
   // reserved height does not depend on whether an RTC is present.
   return (sb.textLaneVisible() ? (metrics.statusBarVerticalMargin) : 0) +
          (sb.showsProgressBar() ? (sb.progressBarHeightPx + metrics.progressBarMarginTop) : 0);
+}
+
+int UITheme::getStatusBarTopHeight(const int orientedMarginTop) {
+#if FREEINK_DEVICE_UT37
+  // Battery is always shown on UT37, so the strip is always reserved. The
+  // reader faces leave 2 px blank above their ink, so the text line box may
+  // start 2 px into the strip's bottom gap and still keep 6 px of clear space.
+  constexpr int kReaderInkTopPadding = 2;
+  return std::max(0, kReaderTopStripHeight - kReaderInkTopPadding - orientedMarginTop);
+#else
+  (void)orientedMarginTop;
+  return 0;
+#endif
 }
 
 int UITheme::getProgressBarHeight() {

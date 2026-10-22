@@ -155,27 +155,16 @@ enum UIIcon {
   Hotspot,
   Bookmark,
   Apps,
-  Sudoku,
-  Sokoban,
-  Gomoku,
 #ifdef ENABLE_CHINESE_VERSION
-  ChineseChess,
   WeRead,
 #endif
-  Minesweeper,
-  Avatar,
   Standby,
-  Game2048,
-  Buddy,
-  PixelSwitch,
   Opds,
   ReadingStats,
   AirPage,
   ReadingHeatmap,
   ReadingProfile,
   Achievements,
-  Calculator,
-  Woodfish,
   Usb
 };
 
@@ -308,6 +297,11 @@ class BaseTheme {
                         const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
                         const std::function<bool(int index)>& rowDimmed = nullptr, bool showSelection = true,
                         const std::function<bool(int index)>& rowHeading = nullptr) const;
+  // Compact clock/battery strip (UT37 Inx). Default: nothing.
+  virtual void drawStatusStrip(const GfxRenderer& renderer, Rect rect) const {
+    (void)renderer;
+    (void)rect;
+  }
   virtual void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title,
                           const char* subtitle = nullptr) const;
   virtual void drawMainTabBar(const GfxRenderer& renderer, Rect rect, MainTab selected) const;

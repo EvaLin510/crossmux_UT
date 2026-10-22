@@ -63,6 +63,8 @@ class InxRecentActivity final : public Activity {
   bool drawBookCover(int bookIndex, const Rect& bounds);
   bool prepareNextMissingCover();
 
+  // Wrapping side book (-1 left, +1 right); -1 when there is only one book.
+  int flowNeighbour(int direction) const;
   void drawFlow(const Rect& content);
   void drawGrid(const Rect& content);
   void drawList(const Rect& content);

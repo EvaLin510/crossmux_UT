@@ -10,7 +10,7 @@
 
 // Web server activity states
 enum class WebServerActivityState {
-  MODE_SELECTION,  // Showing NetworkModeSelectionActivity (Join / Calibre / Hotspot)
+  MODE_SELECTION,  // Showing NetworkModeSelectionActivity (Join / Hotspot)
   WIFI_SELECTION,  // WifiSelectionActivity is active
   AP_STARTING,     // Starting Access Point mode
   SERVER_RUNNING,  // Web server is running and handling requests

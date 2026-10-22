@@ -757,3 +757,11 @@ bool JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(HalFile& jpegFile, Prin
                                                          int targetMaxHeight) {
   return jpegFileToBmpStreamInternal(jpegFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true);
 }
+
+// Full-screen 1-bit BMP: dithers straight from 8-bit source instead of
+// posterizing to 4 levels first, for panels that can only show B/W.
+bool JpegToBmpConverter::jpegFileTo1BitBmpStream(HalFile& jpegFile, Print& bmpOut, bool crop) {
+  const int targetWidth = display.getDisplayHeight();
+  const int targetHeight = display.getDisplayWidth();
+  return jpegFileToBmpStreamInternal(jpegFile, bmpOut, targetWidth, targetHeight, true, crop);
+}

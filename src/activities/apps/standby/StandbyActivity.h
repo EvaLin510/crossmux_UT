@@ -44,6 +44,8 @@ class StandbyActivity final : public Activity {
   uint32_t syncStartMs_ = 0;
   DisplayMode mode_ = DisplayMode::Normal;
   uint32_t lastInputMs_ = 0;
+  // Standby is landscape-only; the UI orientation is restored on exit.
+  GfxRenderer::Orientation savedOrientation_ = GfxRenderer::Orientation::Portrait;
   bool inverseMode_ = false;  // Confirm toggles black-bg/white-content. Not persisted.
 
   void switchFace(int8_t delta);
@@ -61,7 +63,7 @@ class StandbyActivity final : public Activity {
   // Layer a 4-level grayscale refresh on top of the BW image just committed by
   // displayBuffer(): re-render the LSB then MSB planes and composite via the
   // gray LUT waveform. Used by passive faces in Immersive mode (gated on
-  // wantsGrayscale, e.g. the 老黄历 calendar). The face's render() must be
+  // wantsGrayscale). The face's render() must be
   // idempotent across the three passes.
   void applyGrayscalePass(const Rect& viewport);
 };

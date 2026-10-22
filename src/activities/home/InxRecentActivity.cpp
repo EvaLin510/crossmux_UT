@@ -8,10 +8,12 @@
 #include <algorithm>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "ReadingStatsStore.h"
+#include "components/PositionBar.h"
 #include "components/UITheme.h"
 #include "components/icons/cover.h"
 #include "components/themes/inx/InxTheme.h"
@@ -26,6 +28,15 @@ constexpr int kProgressHeight = 6;
 constexpr int kHomeBatteryWidth = 15;
 constexpr int kHomeBatteryHeight = 12;
 constexpr int kHomeBatteryRightMargin = 12;
+
+// The grid pages vertically through more than 4 books; it then keeps a strip
+// on the right for the shared side scrollbar, and drawing and hit-testing
+// both size their cells from this width.
+constexpr int kGridScrollBarReserve = 6;
+int gridCellsWidth(const Rect& content, const int bookCount) {
+  return content.width -
+         (bookCount > InxRecentGeometry::itemsPerPage(InxRecentLayout::Grid) ? kGridScrollBarReserve : 0);
+}
 
 Rect contentRect(const GfxRenderer& renderer) {
   const auto& metrics = UITheme::getInstance().getMetrics();
@@ -45,6 +56,50 @@ void drawMiniProgress(const GfxRenderer& renderer, const Rect rect, const uint8_
 }
 
 uint8_t progressOf(const ReadingBookStats* stats) { return stats ? stats->lastProgressPercent : 0; }
+
+// Placeholder-cover title wrap. GfxRenderer::wrappedText() breaks only at
+// spaces, so a CJK title (no spaces) collapsed to one ellipsised line. This
+// breaks between any two characters, backing up to the last space when a Latin
+// word would be split, and ellipsises only what the last line cannot hold.
+std::vector<std::string> wrapCoverTitle(const GfxRenderer& renderer, const int fontId, const char* text,
+                                        const int maxWidth, const int maxLines) {
+  std::vector<std::string> lines;
+  if (!text || maxWidth <= 0 || maxLines <= 0) return lines;
+  lines.reserve(static_cast<size_t>(maxLines));
+  const char* p = text;
+  while (*p == ' ') ++p;
+  while (*p && static_cast<int>(lines.size()) < maxLines) {
+    if (static_cast<int>(lines.size()) == maxLines - 1) {
+      lines.push_back(renderer.truncatedText(fontId, p, maxWidth));
+      break;
+    }
+    // Longest prefix that fits, advancing one UTF-8 character at a time.
+    const char* end = p;
+    const char* lastSpace = nullptr;
+    std::string candidate;
+    while (*end) {
+      const char* next = end + 1;
+      while (*next && (static_cast<unsigned char>(*next) & 0xC0) == 0x80) ++next;
+      candidate.assign(p, next);
+      if (renderer.getTextWidth(fontId, candidate.c_str()) > maxWidth) break;
+      if (*end == ' ') lastSpace = end;
+      end = next;
+    }
+    if (end == p) {  // not even one character fits
+      lines.push_back(renderer.truncatedText(fontId, p, maxWidth));
+      break;
+    }
+    const bool splitsWord = *end && *end != ' ' && static_cast<unsigned char>(*end) < 0x80 &&
+                            static_cast<unsigned char>(end[-1]) < 0x80 && end[-1] != ' ';
+    if (splitsWord && lastSpace) end = lastSpace;
+    std::string line(p, end);
+    while (!line.empty() && line.back() == ' ') line.pop_back();
+    lines.push_back(std::move(line));
+    p = end;
+    while (*p == ' ') ++p;
+  }
+  return lines;
+}
 
 void drawSparseInk(const GfxRenderer& renderer, const Rect rect) {
   for (int y = rect.y; y < rect.y + rect.height; y += 2) {
@@ -89,14 +144,22 @@ void drawMetric(const GfxRenderer& renderer, const int x, const int y, const cha
   renderer.drawText(SMALL_FONT_ID, x, y + renderer.getLineHeight(UI_12_FONT_ID) + 4, shownLabel.c_str());
 }
 
-void drawBookText(const GfxRenderer& renderer, const RecentBook& book, const int x, const int y, const int width,
-                  const bool author) {
-  const std::string title = renderer.truncatedText(UI_10_FONT_ID, titleOf(book), width, EpdFontFamily::BOLD);
-  renderer.drawText(UI_10_FONT_ID, x, y, title.c_str(), true, EpdFontFamily::BOLD);
+// Returns the y just below the drawn text.
+int drawBookText(const GfxRenderer& renderer, const RecentBook& book, const int x, const int y, const int width,
+                 const bool author) {
+  // Compact: title one UI size above the author, regular weight (bitmap faces
+  // have no bold); the author line follows the title's line height.
+  constexpr auto titleStyle = InxCompactLayout::enabled ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
+  const std::string title = renderer.truncatedText(UI_10_FONT_ID, titleOf(book), width, titleStyle);
+  renderer.drawText(UI_10_FONT_ID, x, y, title.c_str(), true, titleStyle);
+  int bottom = y + renderer.getLineHeight(UI_10_FONT_ID);
   if (author && !book.author.empty()) {
+    const int authorY = InxCompactLayout::enabled ? bottom : y + 27;
     const std::string subtitle = renderer.truncatedText(SMALL_FONT_ID, book.author.c_str(), width);
-    renderer.drawText(SMALL_FONT_ID, x, y + 27, subtitle.c_str());
+    renderer.drawText(SMALL_FONT_ID, x, authorY, subtitle.c_str());
+    bottom = authorY + renderer.getLineHeight(SMALL_FONT_ID);
   }
+  return bottom;
 }
 }  // namespace
 
@@ -294,13 +357,64 @@ bool InxRecentActivity::drawBookCover(const int bookIndex, const Rect& bounds) {
   renderer.fillRect(x, y + size.height / 3, size.width, size.height * 2 / 3);
   constexpr int iconSize = 32;
   renderer.drawIcon(CoverIcon, x + (size.width - iconSize) / 2, y + size.height / 6 - iconSize / 2, iconSize);
+  // Books without a cover (TXT and coverless EPUBs) show their title in white
+  // on the black part, wrapped and centred, so placeholders stay tell-apart.
+  if (books && bookIndex >= 0 && bookIndex < static_cast<int>(books->size())) {
+    const int fontId = size.width >= 90 ? UI_10_FONT_ID : SMALL_FONT_ID;
+    constexpr int pad = 4;
+    const int areaY = y + size.height / 3 + pad;
+    const int areaH = size.height * 2 / 3 - 2 * pad;
+    const int lineH = renderer.getLineHeight(fontId);
+    const int maxLines = std::max(1, areaH / lineH);
+    const auto lines = wrapCoverTitle(renderer, fontId, titleOf((*books)[bookIndex]), size.width - 2 * pad, maxLines);
+    int lineY = areaY + std::max(0, (areaH - static_cast<int>(lines.size()) * lineH) / 2);
+    const GfxRenderer::ClipScope clip(renderer, x + 2, y + size.height / 3, size.width - 4, size.height * 2 / 3 - 2);
+    for (const auto& line : lines) {
+      const int lineW = renderer.getTextWidth(fontId, line.c_str());
+      renderer.drawText(fontId, x + (size.width - lineW) / 2, lineY, line.c_str(), false);
+      lineY += lineH;
+    }
+  }
   return false;
 }
 
 bool InxRecentActivity::prepareNextMissingCover() {
   if (!books || thumbnailHeight <= 0) return false;
   const size_t count = std::min(books->size(), RecentBooksStore::MAX_RECENT_BOOKS);
-  for (size_t index = 0; index < count; ++index) {
+  if (count == 0) return false;
+  // Only covers on screen are generated. Building an off-screen thumbnail
+  // (seconds for a JPEG cover) holds the render task, so the next swipe used
+  // to wait behind books the user had not reached yet; those now get their
+  // thumbnail when they scroll into view.
+  const InxRecentLayout currentLayout = layout();
+  // On-screen books, at most one page (Icons: 3x3); stack array, no heap.
+  std::array<int, 9> onScreen{};
+  static_assert(InxRecentGeometry::itemsPerPage(InxRecentLayout::Icons) <= 9, "onScreen holds one page");
+  size_t onScreenCount = 0;
+  const auto addOnScreen = [&](const int index) {
+    if (index >= 0 && static_cast<size_t>(index) < count && onScreenCount < onScreen.size()) {
+      onScreen[onScreenCount++] = index;
+    }
+  };
+  addOnScreen(std::max(0, selected));
+  switch (currentLayout) {
+    // Flow: only the centre book. Generating a side cover held the render
+    // task on every swipe into uncached EPUBs; side covers draw any existing
+    // thumbnail (or the placeholder) and get theirs once centred.
+    case InxRecentLayout::Flow:
+    case InxRecentLayout::Cover:
+    case InxRecentLayout::Count:
+      break;
+    default: {
+      onScreenCount = 0;
+      const int start = InxRecentGeometry::pageStart(selected, static_cast<int>(books->size()), currentLayout);
+      for (int i = 0; i < InxRecentGeometry::itemsPerPage(currentLayout); ++i) addOnScreen(start + i);
+      break;
+    }
+  }
+  bool displayed = false;
+  for (size_t slot = 0; slot < onScreenCount; ++slot) {
+    const size_t index = static_cast<size_t>(onScreen[slot]);
     CoverCacheState& state = targetCoverStates[index];
     switch (state) {
       case CoverCacheState::Unchecked: {
@@ -322,18 +436,59 @@ bool InxRecentActivity::prepareNextMissingCover() {
         break;
     }
 
-    renderer.displayBuffer();
+    // Show the frame once before the (possibly seconds-long) generation.
+    if (!displayed) {
+      renderer.displayBuffer();
+      displayed = true;
+    }
     {
       GfxRenderer::FrameBufferLoan loan(renderer);
       state = BookCoverLoader::ensureThumbnail((*books)[index].path, thumbnailHeight).empty()
                   ? CoverCacheState::Unavailable
                   : CoverCacheState::Ready;
     }
-    requestUpdate();
-    return true;
+    // A coverless EPUB (empty thumb marker) stays a placeholder, which is already
+    // on screen; only a new thumbnail needs another render and refresh.
+    if (state == CoverCacheState::Ready) {
+      requestUpdate();
+      return true;
+    }
   }
-  return false;
+  return displayed;
 }
+
+namespace {
+// Flow carousel boxes, shared by drawFlow() and indexFromPoint() so drawing
+// and hit-testing use one geometry source.
+struct FlowRects {
+  Rect carousel;
+  Rect center;
+  Rect left;
+  Rect right;
+};
+
+FlowRects flowRects(const Rect& content) {
+  FlowRects rects;
+  const int carouselHeight = std::max(1, content.height * 50 / 100);
+  rects.carousel = Rect{content.x, content.y + (InxCompactLayout::enabled ? InxCompactLayout::contentTopGap : 5),
+                        content.width, carouselHeight};
+  const Rect& carousel = rects.carousel;
+  const auto centerSize = InxCoverGeometry::fit(carousel.width, std::max(1, carousel.height * 94 / 100));
+  rects.center = Rect{carousel.x + (carousel.width - centerSize.width) / 2,
+                      carousel.y + (carousel.height - centerSize.height) / 2, centerSize.width, centerSize.height};
+  const Rect& center = rects.center;
+  const auto sideSize = InxCoverGeometry::fit(carousel.width, std::max(1, center.height * 90 / 100));
+  const int sideTop = center.y + (center.height - sideSize.height) / 2;
+  const int sideGap = std::max(kGap, content.width * 4 / 100);
+  rects.left = Rect{center.x - sideSize.width - sideGap, sideTop, sideSize.width, sideSize.height};
+  rects.right = Rect{center.x + center.width + sideGap, sideTop, sideSize.width, sideSize.height};
+  return rects;
+}
+
+bool contains(const Rect& rect, const int x, const int y) {
+  return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
+}
+}  // namespace
 
 int InxRecentActivity::indexFromPoint(const int x, const int y) const {
   if (!books || books->empty()) return -1;
@@ -356,14 +511,27 @@ int InxRecentActivity::indexFromPoint(const int x, const int y) const {
       columns = 3;
       rows = 3;
       break;
-    case InxRecentLayout::Flow:
+    case InxRecentLayout::Flow: {
+      // A side cover opens that book; the rest of the page opens the centre one.
+      const FlowRects rects = flowRects(content);
+      const bool inCarousel = contains(rects.carousel, x, y);
+      const int previous = flowNeighbour(-1);
+      const int next = flowNeighbour(1);
+      if (inCarousel && previous >= 0 && contains(rects.left, x, y)) return previous;
+      if (inCarousel && next >= 0 && contains(rects.right, x, y)) return next;
+      return selected;
+    }
     case InxRecentLayout::Cover:
       return selected;
     case InxRecentLayout::Count:
       return -1;
   }
 
-  const int column = std::min(columns - 1, (x - content.x) * columns / std::max(1, content.width));
+  const int cellsWidth = currentLayout == InxRecentLayout::Grid
+                             ? gridCellsWidth(content, static_cast<int>(books->size()))
+                             : content.width;
+  if (x >= content.x + cellsWidth) return -1;  // the grid's scrollbar strip
+  const int column = std::min(columns - 1, (x - content.x) * columns / std::max(1, cellsWidth));
   const int row = std::min(rows - 1, (y - content.y) * rows / std::max(1, content.height));
   const int index = start + row * columns + column;
   return index < static_cast<int>(books->size()) ? index : -1;
@@ -381,7 +549,9 @@ void InxRecentActivity::loop() {
   int y = 0;
   if (mappedInput.wasScreenTouchDown(x, y)) {
     const int touched = indexFromPoint(x, y);
-    if (touched >= 0 && touched != selected) {
+    // Flow: moving the selection on touch-down would re-centre the carousel
+    // and the release would then hit a different book; the tap opens it.
+    if (touched >= 0 && touched != selected && layout() != InxRecentLayout::Flow) {
       selected = touched;
       requestUpdate();
     }
@@ -412,49 +582,52 @@ void InxRecentActivity::loop() {
   }
 }
 
+int InxRecentActivity::flowNeighbour(const int direction) const {
+  const int count = books ? static_cast<int>(books->size()) : 0;
+  if (count < 2) return -1;
+  return (selected + direction + count) % count;
+}
+
 void InxRecentActivity::drawFlow(const Rect& content) {
   const bool showSelection = showMainTabContentSelection();
-  const int count = static_cast<int>(books->size());
   const RecentBook& book = (*books)[selected];
-  const int carouselHeight = std::max(1, content.height * 50 / 100);
-  const Rect carousel{content.x, content.y + 5, content.width, carouselHeight};
+  const FlowRects rects = flowRects(content);
+  const Rect& carousel = rects.carousel;
+  const Rect& center = rects.center;
   drawSparseInk(renderer, carousel);
-
-  const auto centerSize = InxCoverGeometry::fit(carousel.width, std::max(1, carousel.height * 94 / 100));
-  const Rect center{carousel.x + (carousel.width - centerSize.width) / 2,
-                    carousel.y + (carousel.height - centerSize.height) / 2, centerSize.width, centerSize.height};
   setThumbnailHeight(InxCoverGeometry::thumbnailHeightForCropFill(center.height));
-  const auto sideSize = InxCoverGeometry::fit(carousel.width, std::max(1, center.height * 90 / 100));
-  const int sideTop = center.y + (center.height - sideSize.height) / 2;
-  const int sideGap = std::max(kGap, content.width * 4 / 100);
   {
     const GfxRenderer::ClipScope clip(renderer, carousel.x, carousel.y, carousel.width, carousel.height);
-    if (selected > 0) {
-      drawBookCover(selected - 1, Rect{center.x - sideSize.width - sideGap, sideTop, sideSize.width, sideSize.height});
-    }
-    if (selected + 1 < count) {
-      drawBookCover(selected + 1, Rect{center.x + center.width + sideGap, sideTop, sideSize.width, sideSize.height});
-    }
+    // Navigation wraps, so the carousel does too: the first book shows the
+    // last one on its left.
+    const int previous = flowNeighbour(-1);
+    const int next = flowNeighbour(1);
+    if (previous >= 0) drawBookCover(previous, rects.left);
+    if (next >= 0) drawBookCover(next, rects.right);
     drawBookCover(selected, center);
     if (showSelection) drawThickFrame(renderer, center);
   }
 
-  const int dividerY = carousel.y + carousel.height + 10;
+  constexpr bool compact = InxCompactLayout::enabled;
+  // Compact: 5 clear rows between the carousel's dither and the divider.
+  const int dividerY = carousel.y + carousel.height + (compact ? 5 : 10);
   renderer.drawLine(content.x, dividerY, content.x + content.width - 1, dividerY, true);
-  const int textY = dividerY + 15;
-  drawBookText(renderer, book, kPagePadding, textY, content.width - kPagePadding * 2, true);
+  const int textY = dividerY + (compact ? 8 : 15);
+  const int textBottom = drawBookText(renderer, book, kPagePadding, textY, content.width - kPagePadding * 2, true);
 
   const ReadingBookStats* stats = statsAt(selected);
   const uint8_t progress = progressOf(stats);
-  const int progressY = textY + 58;
-  const int progressWidth = std::max(24, (content.width - kPagePadding * 2) / 2);
+  // Compact: the bar follows the title/author block instead of a fixed offset.
+  const int progressY = compact ? textBottom + 6 : textY + 58;
+  // Compact: a third longer than the half-width bar (UT37 review).
+  const int progressWidth = std::max(24, (content.width - kPagePadding * 2) * (compact ? 2 : 1) / (compact ? 3 : 2));
   drawMiniProgress(renderer, Rect{kPagePadding, progressY, progressWidth, kProgressHeight}, progress);
   char percent[8];
   snprintf(percent, sizeof(percent), "%u%%", static_cast<unsigned>(progress));
   renderer.drawText(SMALL_FONT_ID, kPagePadding + progressWidth + 12,
                     progressY - (renderer.getLineHeight(SMALL_FONT_ID) - kProgressHeight) / 2, percent);
 
-  const int metricsTop = progressY + 34;
+  const int metricsTop = progressY + (compact ? 18 : 34);
   const int metricWidth = (content.width - kPagePadding * 2 - kGap) / 2;
   const int metricHeight = std::max(1, (content.y + content.height - metricsTop) / 2);
   const std::string total = stats ? ReadingStatsAnalytics::formatDurationHm(stats->totalReadingMs) : "0m";
@@ -472,14 +645,17 @@ void InxRecentActivity::drawFlow(const Rect& content) {
 
 void InxRecentActivity::drawGrid(const Rect& content) {
   const bool showSelection = showMainTabContentSelection();
-  const int start = InxRecentGeometry::pageStart(selected, static_cast<int>(books->size()), layout());
-  const int cellWidth = content.width / 2;
+  const int count = static_cast<int>(books->size());
+  const int start = InxRecentGeometry::pageStart(selected, count, layout());
+  const int cellWidth = gridCellsWidth(content, count) / 2;
   const int cellHeight = content.height / 2;
-  for (int slot = 0; slot < 4 && start + slot < static_cast<int>(books->size()); ++slot) {
+  for (int slot = 0; slot < 4 && start + slot < count; ++slot) {
     const int index = start + slot;
     const int column = slot % 2;
     const int row = slot / 2;
-    const Rect cell{content.x + column * cellWidth + kGap / 2, content.y + row * cellHeight + kGap / 2,
+    // UT37: the first row keeps contentTopGap under the header rule.
+    const int cellTop = InxCompactLayout::enabled ? InxCompactLayout::contentTopGap : kGap / 2;
+    const Rect cell{content.x + column * cellWidth + kGap / 2, content.y + row * cellHeight + cellTop,
                     cellWidth - kGap, cellHeight - kGap};
     if (showSelection && index == selected) drawSparseInk(renderer, cell);
     const Rect cover = fitCoverRect(Rect{cell.x + kGap, cell.y + kGap, cell.width - kGap * 2, cell.height - kGap * 2});
@@ -492,6 +668,8 @@ void InxRecentActivity::drawGrid(const Rect& content) {
     renderer.fillRect(barX - 2, barY - 2, barWidth + 4, kProgressHeight + 4, false);
     drawMiniProgress(renderer, Rect{barX, barY, barWidth, kProgressHeight}, progressOf(statsAt(index)));
   }
+  // Same side scrollbar as the app grid and the lists (no-op within one page).
+  GUI.drawSideScrollBar(renderer, content, count, start, InxRecentGeometry::itemsPerPage(InxRecentLayout::Grid));
 }
 
 void InxRecentActivity::drawList(const Rect& content) {
@@ -507,9 +685,19 @@ void InxRecentActivity::drawList(const Rect& content) {
     drawBookCover(index, cover);
     const int textX = cover.x + cover.width + 14;
     const int textWidth = row.x + row.width - kPagePadding - textX;
-    drawBookText(renderer, (*books)[index], textX, row.y + 14, textWidth, true);
-    drawMiniProgress(renderer,
-                     Rect{textX, row.y + row.height - 15, std::max(24, textWidth * 80 / 100), kProgressHeight},
+    int barY = row.y + row.height - 15;
+    if constexpr (InxCompactLayout::enabled) {
+      // Centre title, author and bar as one block so the bar never covers the author.
+      constexpr int barGap = 4;
+      const int block = renderer.getLineHeight(UI_10_FONT_ID) + renderer.getLineHeight(SMALL_FONT_ID) + barGap +
+                        kProgressHeight;
+      const int textBottom = drawBookText(renderer, (*books)[index], textX, row.y + std::max(0, (row.height - block) / 2),
+                                          textWidth, true);
+      barY = std::min(textBottom + barGap, row.y + row.height - kProgressHeight - 2);
+    } else {
+      drawBookText(renderer, (*books)[index], textX, row.y + 14, textWidth, true);
+    }
+    drawMiniProgress(renderer, Rect{textX, barY, std::max(24, textWidth * 80 / 100), kProgressHeight},
                      progressOf(statsAt(index)));
     if (slot + 1 < 5 && start + slot + 1 < static_cast<int>(books->size())) {
       drawDottedSeparator(renderer, row.x + kGap, row.y + row.height - 1, row.width - kGap * 2);
@@ -582,15 +770,26 @@ void InxRecentActivity::render(RenderLock&&) {
       case InxRecentLayout::Count:
         break;
     }
+    const InxRecentLayout current = layout();
+    if (InxCompactLayout::enabled && (current == InxRecentLayout::Flow || current == InxRecentLayout::Cover)) {
+      // One book per page, paged sideways: bottom position bar, 3 px clear
+      // below its thumb.
+      position_bar::drawHorizontal(renderer, content.x + kPagePadding,
+                                   renderer.getScreenHeight() - 3 - position_bar::kThumbWidth + 1,
+                                   content.width - kPagePadding * 2, static_cast<int>(books->size()), 1, selected);
+    }
   }
 
   const auto labels = mainTabButtonLabels(SETTINGS.standbyShortcutEnabled ? tr(STR_STANDBY_TITLE) : "", tr(STR_OPEN),
                                           books && books->size() > 1, false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  GUI.drawBatteryRight(renderer,
-                       Rect{renderer.getScreenWidth() - kHomeBatteryRightMargin - kHomeBatteryWidth,
-                            renderer.getScreenHeight() - 30, kHomeBatteryWidth, kHomeBatteryHeight},
-                       SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS);
+  // UT37 shows the battery in the top strip; book info belongs to the reader only.
+  if constexpr (!InxCompactLayout::enabled) {
+    GUI.drawBatteryRight(renderer,
+                         Rect{renderer.getScreenWidth() - kHomeBatteryRightMargin - kHomeBatteryWidth,
+                              renderer.getScreenHeight() - 30, kHomeBatteryWidth, kHomeBatteryHeight},
+                         SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS);
+  }
   if (prepareNextMissingCover()) return;
   renderer.displayBuffer();
 }

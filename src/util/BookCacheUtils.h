@@ -6,6 +6,11 @@
 // (EPUB, XTC, TXT, or Markdown). Does nothing for other file types.
 bool clearBookCache(const std::string& path);
 
+// Same as clearBookCache, but restores progress.bin afterwards. For a book file
+// replaced in place (re-upload to the same path): layout caches go stale, the
+// reading position does not. Readers validate the restored position on load.
+bool clearBookCacheKeepProgress(const std::string& path);
+
 // Returns the path-keyed cache directory, or an empty string for non-book files.
 std::string bookCachePath(const std::string& path);
 

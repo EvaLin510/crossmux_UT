@@ -8,7 +8,6 @@
 #include <cstdio>
 #include <string>
 
-#include "AchievementsStore.h"
 #include "ReadingDateSelectionActivity.h"
 #include "ReadingStatsStore.h"
 #include "activities/apps/GameUi.h"
@@ -182,7 +181,6 @@ bool BookReadingAdjustmentActivity::applyAdjustment() {
     return false;
   }
 
-  ACHIEVEMENTS.rebuildProgressFromCurrentStats();
   finish();
   return true;
 }

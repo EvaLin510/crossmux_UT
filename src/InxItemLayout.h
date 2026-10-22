@@ -6,6 +6,34 @@
 
 enum class InxItemLayout : uint8_t { Icons, List, Count };
 
+// Low-PPI 240x416 panel (UT37): rows and margins sized for its 13-15 px bitmap
+// UI fonts instead of the 800x480 Inx defaults. Drawing and touch hit-testing
+// both read these values.
+namespace InxCompactLayout {
+#if FREEINK_DEVICE_UT37
+inline constexpr bool enabled = true;
+#else
+inline constexpr bool enabled = false;
+#endif
+// UT37: every selectable row (and so its selection block) is 45 px tall, in
+// GUI-drawn and FreeInkUI lists alike (uiThemeTokens copies it).
+inline constexpr int rowHeight = enabled ? 45 : 66;
+inline constexpr int sidePadding = enabled ? 8 : 20;
+// Top strip: clock left, battery right, 3 px clear above and 6 px below the
+// 13 px battery (status_strip::kHeight).
+inline constexpr int statusStripHeight = enabled ? 22 : 0;
+// Clear rows between the header's bottom rule and the first content (list
+// rows, grid cells, the Recent carousel).
+inline constexpr int contentTopGap = enabled ? 5 : 0;
+}  // namespace InxCompactLayout
+
+// Selected rows and cells fill black and invert their text and icons (UT37
+// review: LightGray dither selection read poorly). false switches every Inx
+// list, grid and popup to a LightGray dither with black content.
+namespace InxSelection {
+inline constexpr bool inverts = true;
+}  // namespace InxSelection
+
 namespace InxCoverGeometry {
 inline constexpr int sourceWidth = 170;
 inline constexpr int sourceHeight = 250;
@@ -67,7 +95,7 @@ constexpr int indexFromPoint(const int x, const int y, const int width, const in
 }  // namespace InxGridGeometry
 
 namespace InxMenuGeometry {
-inline constexpr int rowHeight = 66;
+inline constexpr int rowHeight = InxCompactLayout::rowHeight;
 
 constexpr int pageItems(const int contentHeight) { return contentHeight < rowHeight ? 1 : contentHeight / rowHeight; }
 
@@ -81,8 +109,9 @@ constexpr int pageStart(const int selected, const int itemCount, const int conte
 
 namespace InxOptionGeometry {
 inline constexpr int visibleRowLimit = 5;
-inline constexpr int rowHeight = 62;
-inline constexpr int headerHeight = 62;
+// UT37 option rows share the 45 px selection block of every other list.
+inline constexpr int rowHeight = InxCompactLayout::enabled ? InxCompactLayout::rowHeight : 62;
+inline constexpr int headerHeight = InxCompactLayout::enabled ? 40 : 62;
 
 constexpr int visibleRows(const int optionCount) {
   return optionCount < visibleRowLimit ? (optionCount > 0 ? optionCount : 0) : visibleRowLimit;

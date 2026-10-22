@@ -51,6 +51,19 @@ void HalStorage::prepareForDeepSleep() {
   SDCard.shutdown();
 }
 
+SdCardChange HalStorage::pollCardChange() {
+  StorageLock lock;
+  switch (SDCard.pollCardChange()) {
+    case SDCardManager::CardChange::Removed:
+      return SdCardChange::Removed;
+    case SDCardManager::CardChange::Reinserted:
+      return SdCardChange::Reinserted;
+    case SDCardManager::CardChange::None:
+      break;
+  }
+  return SdCardChange::None;
+}
+
 #if FREEINK_CAP_USB_MSC && !FREEINK_SD_SDMMC
 #error "USB Drive requires an SDMMC-backed storage profile"
 #endif

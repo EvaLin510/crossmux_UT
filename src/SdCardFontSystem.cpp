@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <Logging.h>
 
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 
@@ -22,14 +23,27 @@ void snapFontPointSizeTo(const uint8_t availablePointSize) {
   SETTINGS.saveToFile();
 }
 
-#ifndef ENABLE_CHINESE_VERSION
-// Global-build UI fonts and their physical point sizes (at 150 DPI, matching
-// the SD-font converter). CN builds already embed Simplified-Chinese UI fonts
-// and deliberately avoid keeping three additional SD font sizes resident.
+#if !defined(ENABLE_CHINESE_VERSION) || CROSSMUX_SD_UI_FONT
 struct UiFontSize {
   int fontId;
   uint8_t pointSize;
 };
+#endif
+
+#if CROSSMUX_SD_UI_FONT
+// SD bitmap UI face sizes, matching the built-in wqy_zhenghei_10/12/14 faces
+// (13/14/15 px CJK cells) that main.cpp registers for the same UI font ids.
+constexpr UiFontSize kSdUiFontSizes[] = {
+    {SMALL_FONT_ID, 10},
+    {UI_10_FONT_ID, 12},
+    {UI_12_FONT_ID, 14},
+};
+#endif
+
+#ifndef ENABLE_CHINESE_VERSION
+// Global-build UI fonts and their physical point sizes (at 150 DPI, matching
+// the SD-font converter). CN builds already embed Simplified-Chinese UI fonts
+// and deliberately avoid keeping three additional SD font sizes resident.
 constexpr UiFontSize kUiFontSizes[] = {
     {SMALL_FONT_ID, 8},
     {UI_10_FONT_ID, 10},
@@ -42,6 +56,13 @@ constexpr UiFontSize kUiFontSizes[] = {
 void SdCardFontSystem::begin(GfxRenderer& renderer) {
   registry_.discover();
   adoptCompleteChineseNotoSans();
+#if CROSSMUX_SD_UI_FONT
+  // Any font without its own CJK fallback (reader faces reused for UI titles,
+  // e.g. reading-stats book titles) falls back to the 15 px bitmap UI face,
+  // which itself chains to the SD family for rare characters.
+  renderer.setDefaultCjkFallbackFont(renderer.getFallbackFontId(UI_12_FONT_ID));
+  setupSdUiFont(renderer);
+#endif
 
   // Register this system as the SD font ID resolver in settings.
   // Uses a static trampoline since CrossPointSettings stores a plain function pointer.
@@ -162,7 +183,52 @@ bool SdCardFontSystem::adoptCompleteChineseNotoSans() {
 #endif
 }
 
+#if CROSSMUX_SD_UI_FONT
+void SdCardFontSystem::setupSdUiFont(GfxRenderer& renderer) {
+  const SdCardFontFamilyInfo* family = nullptr;
+  for (const char* name : SD_UI_FONT_FAMILIES) {
+    family = registry_.findFamily(name);
+    if (family) break;
+  }
+  if (!family) {
+    LOG_INF("SDFS", "SD UI font %s not installed; using built-in UI fonts", SD_UI_FONT_FAMILIES[0]);
+    return;
+  }
+  // Distinct id seed: the reader may load the same family and file.
+  char idName[48];
+  snprintf(idName, sizeof(idName), "%s#ui", family->name.c_str());
+  for (const auto& ui : kSdUiFontSizes) {
+    const auto* file = family->findFile(ui.pointSize);
+    if (!file) {
+      LOG_ERR("SDFS", "SD UI font %s has no %u pt file", family->name.c_str(), ui.pointSize);
+      continue;
+    }
+    // The built-in subset (main.cpp) holds only the ~2000 most frequent
+    // characters, so book titles and file names reach this face routinely, and
+    // list rows measure each title several times (truncation) per redraw.
+    // Without a cache every measure re-reads the glyphs from the card. The
+    // 1 MiB PSRAM cache is allocated on first use, only while PSRAM keeps
+    // PSRAM_FREE_RESERVE free.
+    const int fontId = uiManager_.loadStandaloneFile(*file, idName, renderer, true);
+    if (fontId == 0) continue;
+    const int builtinId = renderer.getFallbackFontId(ui.fontId);
+    if (builtinId != 0) {
+      // Chained behind the built-in bitmap subset: CJK strings it cannot draw.
+      renderer.setFallbackFont(builtinId, fontId);
+    } else {
+      renderer.setFallbackFont(ui.fontId, fontId, true);
+    }
+    sdUiFontActive_ = true;
+    LOG_INF("SDFS", "UI font %d rare-glyph fallback -> SD bitmap %s", ui.fontId, file->path.c_str());
+  }
+}
+#endif
+
 void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
+#if CROSSMUX_SD_UI_FONT
+  // The SD UI face already covers rare CJK; reader-family sizes would replace it.
+  if (sdUiFontActive_) return;
+#endif
 #ifdef ENABLE_CHINESE_VERSION
   // Unified firmware has built-in 8/10/12pt Simplified-Chinese UI fallbacks.
   // Keep only the selected reader-size SD font resident: loading

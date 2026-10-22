@@ -82,21 +82,8 @@ int heatmapCellAt(const HeatmapLayout& layout, const int x, const int y) {
   return row * 7 + column;
 }
 
-bool isLeapYear(const int year) { return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0); }
-
-unsigned getDaysInMonth(const int year, const unsigned month) {
-  static constexpr unsigned DAYS_PER_MONTH[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  if (month == 2) {
-    return isLeapYear(year) ? 29U : 28U;
-  }
-  if (month < 1 || month > 12) {
-    return 30;
-  }
-  return DAYS_PER_MONTH[month - 1];
-}
-
 unsigned clampDayToMonth(const int year, const unsigned month, const unsigned preferredDay) {
-  const unsigned daysInMonth = getDaysInMonth(year, month);
+  const unsigned daysInMonth = TimeUtils::getDaysInMonth(year, month);
   if (preferredDay == 0) {
     return 1;
   }
@@ -132,10 +119,6 @@ void resolveReferenceMonth(int& year, unsigned& month, uint32_t& dayOrdinal) {
     month = 1;
     dayOrdinal = 0;
   }
-}
-
-std::string formatMonthLabel(const int year, const unsigned month) {
-  return ReadingStatsAnalytics::formatMonthLabel(year, month);
 }
 
 int getHeatLevel(const uint64_t readingMs) {
@@ -260,7 +243,7 @@ void drawLegendSwatch(const GfxRenderer& renderer, const Rect& rect, const int l
 MonthSummary buildMonthSummary(const int year, const unsigned month) {
   MonthSummary summary;
   const uint32_t monthStart = TimeUtils::getDayOrdinalForDate(year, month, 1);
-  const uint32_t monthEnd = TimeUtils::getDayOrdinalForDate(year, month, getDaysInMonth(year, month));
+  const uint32_t monthEnd = TimeUtils::getDayOrdinalForDate(year, month, TimeUtils::getDaysInMonth(year, month));
   for (const auto& day : READING_STATS.getReadingDays()) {
     if (day.dayOrdinal < monthStart || day.dayOrdinal > monthEnd) {
       continue;
@@ -424,7 +407,7 @@ void ReadingHeatmapActivity::moveSelection(const int delta) {
 
   const uint32_t firstDayOrdinal = TimeUtils::getDayOrdinalForDate(viewedYear, viewedMonth, 1);
   const uint32_t lastDayOrdinal =
-      TimeUtils::getDayOrdinalForDate(viewedYear, viewedMonth, getDaysInMonth(viewedYear, viewedMonth));
+      TimeUtils::getDayOrdinalForDate(viewedYear, viewedMonth, TimeUtils::getDaysInMonth(viewedYear, viewedMonth));
   int32_t nextOrdinal = static_cast<int32_t>(selectedDayOrdinal) + delta;
   if (nextOrdinal < 1) {
     nextOrdinal = 1;
@@ -523,7 +506,7 @@ void ReadingHeatmapActivity::render(RenderLock&&) {
           : (READING_STATS.hasReadingDays() ? READING_STATS.getReadingDays().back().dayOrdinal : 0);
   const auto monthSummary = buildMonthSummary(viewedYear, viewedMonth);
   const auto cells = buildHeatmapCells(viewedYear, viewedMonth, referenceDayOrdinal, selectedDayOrdinal);
-  const std::string monthLabel = formatMonthLabel(viewedYear, viewedMonth);
+  const std::string monthLabel = ReadingStatsAnalytics::formatMonthLabel(viewedYear, viewedMonth);
   const std::string selectedDateLabel = ReadingStatsAnalytics::formatDayOrdinalLabel(selectedDayOrdinal);
 
   GUI.drawSubHeader(renderer, Rect{0, layout.contentTop, pageWidth, MONTH_HEADER_HEIGHT}, monthLabel.c_str(),

@@ -5,7 +5,6 @@
 #include <memory>
 #include <string>
 
-#include "AchievementsActivity.h"
 #include "AppMetricCard.h"
 #include "CrossPointSettings.h"
 #include "ReadingHeatmapActivity.h"
@@ -15,9 +14,8 @@
 
 namespace {
 
-// Screens listed in the Reading Stats sub-menu. Achievements is kept LAST so it
-// can be hidden by simply trimming the active count when the setting is off.
-enum class StatsScreen { Stats, Heatmap, Profile, Achievements };
+// Screens listed in the Reading Stats sub-menu.
+enum class StatsScreen { Stats, Heatmap, Profile };
 
 struct MenuEntry {
   StrId titleId;
@@ -29,13 +27,11 @@ constexpr MenuEntry kEntries[] = {
     {StrId::STR_READING_STATS, StatsScreen::Stats, UIIcon::ReadingStats},
     {StrId::STR_READING_HEATMAP, StatsScreen::Heatmap, UIIcon::ReadingHeatmap},
     {StrId::STR_READING_PROFILE, StatsScreen::Profile, UIIcon::ReadingProfile},
-    {StrId::STR_ACHIEVEMENTS, StatsScreen::Achievements, UIIcon::Achievements},
 };
 
 constexpr int kEntryCount = static_cast<int>(sizeof(kEntries) / sizeof(kEntries[0]));
 
-// Achievements (the last row) is only listed when enabled in settings.
-int activeEntryCount() { return SETTINGS.achievementsEnabled ? kEntryCount : kEntryCount - 1; }
+int activeEntryCount() { return kEntryCount; }
 
 }  // namespace
 
@@ -61,9 +57,6 @@ void ReadingStatsMenuActivity::openSelected() {
       break;
     case StatsScreen::Profile:
       startActivityForResultWith<ReadingProfileActivity>([](const ActivityResult&) {});
-      break;
-    case StatsScreen::Achievements:
-      startActivityForResultWith<AchievementsActivity>([](const ActivityResult&) {});
       break;
   }
 }

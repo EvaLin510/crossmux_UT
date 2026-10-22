@@ -21,10 +21,6 @@ constexpr int SUMMARY_CARD_HEIGHT = 70;
 constexpr int SUMMARY_GAP = 8;
 
 std::string getBookTitle(const ReadingBookStats& book) { return book.title.empty() ? book.path : book.title; }
-
-void drawMetricCard(const GfxRenderer& renderer, const Rect& rect, const char* label, const std::string& value) {
-  AppMetricCard::draw(renderer, rect, label, value);
-}
 }  // namespace
 
 ReadingDayDetailActivity::ReadingDayDetailActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -97,9 +93,9 @@ void ReadingDayDetailActivity::drawChrome() {
 
   HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_READING_DAY), dateLabel.c_str());
 
-  drawMetricCard(renderer, Rect{sidePadding, contentTop, cardWidth, SUMMARY_CARD_HEIGHT}, tr(STR_TOTAL_TIME),
+  AppMetricCard::draw(renderer, Rect{sidePadding, contentTop, cardWidth, SUMMARY_CARD_HEIGHT}, tr(STR_TOTAL_TIME),
                  totalReadingText);
-  drawMetricCard(renderer, Rect{sidePadding + cardWidth + SUMMARY_GAP, contentTop, cardWidth, SUMMARY_CARD_HEIGHT},
+  AppMetricCard::draw(renderer, Rect{sidePadding + cardWidth + SUMMARY_GAP, contentTop, cardWidth, SUMMARY_CARD_HEIGHT},
                  tr(STR_BOOKS_READ), bookCountText);
 
   const int listTop = contentTop + SUMMARY_CARD_HEIGHT + metrics.verticalSpacing;

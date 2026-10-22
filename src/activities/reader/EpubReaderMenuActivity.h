@@ -23,8 +23,6 @@ class EpubReaderMenuActivity final : public UiListActivity {
     ROTATE_SCREEN,
     BOOKMARKS,
     TOGGLE_BOOKMARK,
-    SCREENSHOT,
-    DISPLAY_QR,
     GO_HOME,
     SYNC,
     DELETE_CACHE,
@@ -37,11 +35,14 @@ class EpubReaderMenuActivity final : public UiListActivity {
   };
 
   static void buildMenuItems(std::vector<MenuItem>& items, bool hasFootnotes, bool hasBookmarks);
+  // The TXT reader's items: as EPUB minus footnotes and the auto-turn row;
+  // sync is KOReader only.
+  static void buildTxtMenuItems(std::vector<MenuItem>& items, bool hasBookmarks);
 
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                                   const int currentPage, const int totalPages, const int bookProgressPercent,
                                   const uint8_t currentOrientation, const uint8_t initialPageTurnRate,
-                                  const bool hasFootnotes, bool hasBookmarks);
+                                  const bool hasFootnotes, bool hasBookmarks, bool txtItems = false);
 
   void render(RenderLock&&) override;
   bool handleHomeGesture() override;

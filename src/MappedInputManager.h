@@ -14,6 +14,10 @@ enum class ScreenEdge : uint8_t;
 
 class MappedInputManager {
  public:
+  // UT37 function key: holding it this long runs the long-press action instead of
+  // the short-press one, and the release that ends such a hold is swallowed.
+  static constexpr unsigned long FUNCTION_KEY_LONG_PRESS_MS = 800;
+
   enum class Button {
     Back,
     Confirm,
@@ -94,6 +98,10 @@ class MappedInputManager {
   // Back = left-to-right swipe anchored at the left edge. Public so swipe-mode
   // page turns (reader) can exclude it from a plain SwipeDir::Right.
   bool wasBackGesture() const;
+  // UT37 reading surface: the same left-edge swipe as Back elsewhere exits the
+  // book (UT37 has no Back key). Always false on other boards, whose reader
+  // keeps right swipes for paging back.
+  bool wasReaderEdgeBackGesture() const;
   // Home-key boards use a short Home-key tap to exit; their bottom-edge swipe
   // is intentionally unused. Other boards retain the bottom-edge Home gesture.
   // The reader menu remains on its existing top-edge gesture and middle tap.
@@ -125,6 +133,10 @@ class MappedInputManager {
   void setBleCaptureMode(bool enabled);
   bool takeCapturedBleKey(uint8_t& kind, uint8_t& value);
 
+  // Header-tap Back (UT37) is off on the reading surface, where a top-row tap
+  // turns the page. ActivityManager sets this from the current activity.
+  void setHeaderTapBackAllowed(bool allowed) { headerTapBackAllowed = allowed; }
+
   // True when the control axis is flipped relative to the physical buttons: always on touch boards,
   // or when button-only boards opt in, while the screen is currently INVERTED / LANDSCAPE_CCW.
   [[nodiscard]] bool isNavDirectionSwapped() const;
@@ -145,10 +157,15 @@ class MappedInputManager {
   void pollBle() const;
   // SDK edge classification (fui::edgeSwipe) + the shared decode/held-time
   // bookkeeping; the wrappers below give each edge its board meaning.
-  bool wasEdgeSwipe(freeink::ui::ScreenEdge edge) const;
+  // edgeFrac < 0 uses the SDK default band for that edge.
+  bool wasEdgeSwipe(freeink::ui::ScreenEdge edge, float edgeFrac = -1.0f) const;
   bool wasTopEdgeDownSwipe() const;
   bool wasBottomEdgeUpSwipe() const;
   bool wasHeaderTapBack() const;
+#if FREEINK_DEVICE_UT37
+  // Function key short release when Settings maps it to Back.
+  bool wasFunctionKeyBack() const;
+#endif
   // Fetch the pending swipe (if any) and map both endpoints to logical screen coords
   bool decodeSwipe(int& sx, int& sy, int& ex, int& ey) const;
   bool listItemFromPoint(int x, int y, int& index, int itemCount, int selectedIndex, int listTop, int listHeight,
@@ -169,6 +186,7 @@ class MappedInputManager {
   mutable std::array<bool, kButtonCount> blePendingEdges{};
   mutable bool bleActivityThisFrame = false;
   bool bleCaptureMode = false;
+  bool headerTapBackAllowed = true;
   mutable bool bleHasCaptured = false;
   mutable uint8_t bleCapturedKind = 0xFF;
   mutable uint8_t bleCapturedValue = 0;

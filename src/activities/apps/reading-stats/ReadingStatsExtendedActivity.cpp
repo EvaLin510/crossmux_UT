@@ -32,29 +32,9 @@ struct ChartBar {
   uint64_t readingMs = 0;
 };
 
-void drawMetricCard(const GfxRenderer& renderer, const Rect& rect, const char* label, const std::string& value,
-                    const bool showCheck = false) {
-  AppMetricCard::Options options;
-  options.showCheck = showCheck;
-  AppMetricCard::draw(renderer, rect, label, value, options);
-}
-
 void drawRecentWindowCard(const GfxRenderer& renderer, const Rect& rect, const char* periodLabel,
                           const std::string& value) {
-  drawMetricCard(renderer, rect, periodLabel, value);
-}
-
-void civilFromDays(int z, int& year, unsigned& month, unsigned& day) {
-  z += 719468;
-  const int era = (z >= 0 ? z : z - 146096) / 146097;
-  const unsigned doe = static_cast<unsigned>(z - era * 146097);
-  const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-  year = static_cast<int>(yoe) + era * 400;
-  const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-  const unsigned mp = (5 * doy + 2) / 153;
-  day = doy - (153 * mp + 2) / 5 + 1;
-  month = mp + (mp < 10 ? 3 : -9);
-  year += (month <= 2);
+  AppMetricCard::draw(renderer, rect, periodLabel, value);
 }
 
 std::string formatMinutesLabel(const uint64_t readingMs) {
@@ -92,7 +72,7 @@ std::string formatDayLabel(const uint32_t dayOrdinal) {
   int year = 0;
   unsigned month = 0;
   unsigned day = 0;
-  civilFromDays(static_cast<int>(dayOrdinal), year, month, day);
+  TimeUtils::getDateFromDayOrdinal(dayOrdinal, year, month, day);
 
   char buffer[16];
   snprintf(buffer, sizeof(buffer), "%02u/%02u", day, month);
@@ -126,7 +106,7 @@ int resolveReferenceYear(const std::vector<ReadingDayStats>& readingDays) {
   int year = 0;
   unsigned month = 0;
   unsigned day = 0;
-  civilFromDays(static_cast<int>(referenceDayOrdinal), year, month, day);
+  TimeUtils::getDateFromDayOrdinal(referenceDayOrdinal, year, month, day);
   return year;
 }
 
@@ -176,7 +156,7 @@ std::vector<ChartBar> getAnnualReadingBars(int& year) {
     int dayYear = 0;
     unsigned dayMonth = 0;
     unsigned dayNumber = 0;
-    civilFromDays(static_cast<int>(day.dayOrdinal), dayYear, dayMonth, dayNumber);
+    TimeUtils::getDateFromDayOrdinal(day.dayOrdinal, dayYear, dayMonth, dayNumber);
     if (dayYear != year || dayMonth == 0 || dayMonth > 12) {
       continue;
     }
@@ -342,9 +322,6 @@ void ReadingStatsExtendedActivity::render(RenderLock&&) {
 
   const std::string last7DaysValue = ReadingStatsAnalytics::formatDurationHm(READING_STATS.getRecentReadingMs(7));
   const std::string last30DaysValue = ReadingStatsAnalytics::formatDurationHm(READING_STATS.getRecentReadingMs(30));
-  const uint64_t todayReadingMs = READING_STATS.getTodayReadingMs();
-  const std::string dailyGoalValue = ReadingStatsAnalytics::formatDurationHm(todayReadingMs) + " / " +
-                                     ReadingStatsAnalytics::formatDurationHm(getDailyReadingGoalMs());
   int annualReadingYear = 0;
   const auto annualReadingBars = getAnnualReadingBars(annualReadingYear);
 
@@ -373,24 +350,7 @@ void ReadingStatsExtendedActivity::render(RenderLock&&) {
 
   HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_READING_STATS), tr(STR_MORE_DETAILS));
 
-  drawMetricCard(renderer, Rect{sidePadding, summaryTop, cardWidth, SUMMARY_CARD_HEIGHT}, tr(STR_STREAK),
-                 std::to_string(READING_STATS.getCurrentStreakDays()));
-  drawMetricCard(renderer, Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop, cardWidth, SUMMARY_CARD_HEIGHT},
-                 tr(STR_MAX_STREAK), std::to_string(READING_STATS.getMaxStreakDays()));
-  drawMetricCard(renderer,
-                 Rect{sidePadding, summaryTop + SUMMARY_CARD_HEIGHT + SUMMARY_GAP, cardWidth, SUMMARY_CARD_HEIGHT},
-                 tr(STR_DAILY_GOAL), dailyGoalValue, todayReadingMs >= getDailyReadingGoalMs());
-  drawMetricCard(renderer,
-                 Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop + SUMMARY_CARD_HEIGHT + SUMMARY_GAP, cardWidth,
-                      SUMMARY_CARD_HEIGHT},
-                 tr(STR_READING_TIME), ReadingStatsAnalytics::formatDurationHm(READING_STATS.getTotalReadingMs()));
-  drawMetricCard(
-      renderer, Rect{sidePadding, summaryTop + (SUMMARY_CARD_HEIGHT + SUMMARY_GAP) * 2, cardWidth, SUMMARY_CARD_HEIGHT},
-      tr(STR_BOOKS_FINISHED), std::to_string(READING_STATS.getBooksFinishedCount()));
-  drawMetricCard(renderer,
-                 Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop + (SUMMARY_CARD_HEIGHT + SUMMARY_GAP) * 2,
-                      cardWidth, SUMMARY_CARD_HEIGHT},
-                 tr(STR_BOOKS_STARTED), std::to_string(READING_STATS.getBooksStartedCount()));
+  AppMetricCard::drawSummaryGrid(renderer, sidePadding, summaryTop, cardWidth, SUMMARY_CARD_HEIGHT, SUMMARY_GAP);
 
   drawRecentWindowCard(renderer, Rect{sidePadding, recentTop, cardWidth, RECENT_CARD_HEIGHT}, "7D", last7DaysValue);
   drawRecentWindowCard(renderer, Rect{sidePadding + cardWidth + SUMMARY_GAP, recentTop, cardWidth, RECENT_CARD_HEIGHT},

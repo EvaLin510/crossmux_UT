@@ -23,10 +23,16 @@ EpubReaderBookmarksActivity::EpubReaderBookmarksActivity(GfxRenderer& renderer, 
       epub(epub),
       epubPath(epubPath) {}
 
+EpubReaderBookmarksActivity::EpubReaderBookmarksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                                         const Txt& txt)
+    : UiListActivity("EpubReaderBookmarks", renderer, mappedInput, /*wantsTouchLongPress=*/true),
+      txt(&txt),
+      epubPath(txt.getPath()) {}
+
 void EpubReaderBookmarksActivity::onEnter() {
   UiListActivity::onEnter();
 
-  if (!epub) {
+  if (!epub && !txt) {
     return;
   }
 
@@ -44,15 +50,42 @@ void EpubReaderBookmarksActivity::onEnter() {
 void EpubReaderBookmarksActivity::rebuildBookmarkRowItems() {
   bookmarkSubtitles.clear();
   bookmarkRowItems.clear();
-  if (!epub) {
+  if (!epub && !txt) {
     return;
   }
   bookmarkSubtitles.reserve(bookmarks.size());
   bookmarkRowItems.reserve(bookmarks.size());
+  // TXT chapter titles come from the on-disk chapter index, one record at a
+  // time; a book without a built index shows the percentage only.
+  HalFile chapterFile;
+  uint32_t chapterCount = 0;
+  if (txt) {
+    txt_encoding::Encoding encoding = txt_encoding::Encoding::Unknown;
+    if (!txt->openChapterIndex(chapterFile, encoding, chapterCount)) chapterCount = 0;
+  }
   for (const auto& bookmark : bookmarks) {
+    std::string subtitle = std::to_string((int)(std::clamp(bookmark.percentage, 0.0f, 1.0f) * 100.0f + 0.5f)) + "%";
+    if (txt) {
+      uint32_t chapterIndex = 0;
+      txt_chapter_index::Record chapter;
+      if (chapterCount > 0 && bookmark.hasVisibleTextOffset &&
+          txt->findChapterForOffset(chapterFile, chapterCount, bookmark.visibleTextOffset, chapterIndex) &&
+          txt->readChapter(chapterFile, chapterCount, chapterIndex, chapter) && chapter.title[0] != '\0') {
+        subtitle += " - ";
+        subtitle += chapter.title;
+      }
+      bookmarkSubtitles.push_back(std::move(subtitle));
+      fui::ListItem item;
+      item.label = bookmark.summary.c_str();
+      item.subtitle = bookmarkSubtitles.back().c_str();
+      item.icon = listIconFor(UIIcon::Bookmark, 32);
+      item.actionValue = static_cast<int16_t>(bookmarkRowItems.size());
+      bookmarkRowItems.push_back(item);
+      continue;
+    }
     const auto tocIndex = epub->getTocIndexForSpineIndex(bookmark.computedSpineIndex);
     const auto tocTitle = (tocIndex >= 0) ? epub->getTocItem(tocIndex).title : tr(STR_UNNAMED);
-    std::string subtitle = std::to_string((int)(std::clamp(bookmark.percentage, 0.0f, 1.0f) * 100.0f + 0.5f)) + "% - ";
+    subtitle += " - ";
     if (bookmark.computedChapterPageCount > 0) {
       subtitle += std::to_string(bookmark.computedChapterProgress + 1) + "/" +
                   std::to_string(bookmark.computedChapterPageCount) + " - ";
@@ -84,7 +117,7 @@ void EpubReaderBookmarksActivity::openSelectedBookmark() {
   // are stale. The reader validates the index.
   result.spineIndex = bookmark.computedSpineIndex;
   if (bookmark.computedChapterPageCount > 0 && bookmark.computedChapterProgress < bookmark.computedChapterPageCount &&
-      bookmark.computedSpineIndex < epub->getSpineItemsCount()) {
+      epub && bookmark.computedSpineIndex < epub->getSpineItemsCount()) {
     result.page = bookmark.computedChapterProgress;
     result.totalPages = bookmark.computedChapterPageCount;
   }

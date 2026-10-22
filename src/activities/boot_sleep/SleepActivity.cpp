@@ -27,7 +27,11 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/Logo120.h"
+#if FREEINK_DEVICE_UT37
+#include "images/PowerOffCover.h"
+#endif
 #include "images/MoonIcon.h"
+#include "util/SleepClock.h"
 
 namespace {
 
@@ -497,6 +501,10 @@ void SleepActivity::onEnter() {
   // so clear any inversion left over from a night-mode reader render.
   display.setInverted(false);
 
+  if (powerOffScreen) {
+    return renderPowerOffScreen();
+  }
+
   const bool renderQuickResume =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
       (fromTimeout &&
@@ -543,6 +551,13 @@ void SleepActivity::onEnter() {
       } else {
         return renderCustomSleepScreen();
       }
+#if FREEINK_DEVICE_UT37
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::CLOCK):
+      // First frame of the Clock sleep screen; main.cpp's clock sleep loop
+      // repaints it every minute. The half waveform clears the popup above.
+      sleep_clock::begin();
+      return sleep_clock::draw(renderer, /*cleanGhosting=*/true);
+#endif
     default:
       return renderDefaultSleepScreen();
   }
@@ -591,6 +606,39 @@ void SleepActivity::renderCustomSleepScreen() const {
 // firmware's only clean refresh in normal operation is the single-pass 0xD7
 // sequence, used once for the sleep image. It never runs the multi-flash GC
 // waveform (0xF7) that FULL_REFRESH selects (#2471's blinking complaint).
+void SleepActivity::renderPowerOffScreen() const {
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+#if FREEINK_DEVICE_UT37
+  // Full-screen cover image on black, the wake hint as one white 10pt line at
+  // the bottom (the cover's bottom band is solid black).
+  renderer.fillRect(0, 0, pageWidth, pageHeight, true);
+  const int coverX = (pageWidth - POWER_OFF_COVER_WIDTH) / 2;
+  const int coverY = (pageHeight - POWER_OFF_COVER_HEIGHT) / 2;
+  constexpr int coverStride = POWER_OFF_COVER_WIDTH / 8;
+  for (int y = 0; y < POWER_OFF_COVER_HEIGHT; y++) {
+    const uint8_t* row = PowerOffCover + y * coverStride;
+    for (int x = 0; x < POWER_OFF_COVER_WIDTH; x++) {
+      // Bit 1 is ink; the background is already black, so only paint white.
+      if (!(row[x >> 3] & (0x80 >> (x & 7)))) renderer.drawPixel(coverX + x, coverY + y, false);
+    }
+  }
+  int top = 0;
+  int right = 0;
+  int bottom = 0;
+  int left = 0;
+  renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
+  renderer.drawCenteredText(UI_10_FONT_ID, pageHeight - bottom - renderer.getLineHeight(UI_10_FONT_ID) - 12,
+                            tr(STR_POWER_ON_HINT_FUNC_KEY), false);
+#else
+  (void)pageWidth;
+  renderer.clearScreen();
+  renderer.drawCenteredText(UI_12_FONT_ID, pageHeight / 2 - 20, tr(STR_POWER_OFF), true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 16, tr(STR_POWER_ON_HINT));
+#endif
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+}
+
 void SleepActivity::renderDefaultSleepScreen() const {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();

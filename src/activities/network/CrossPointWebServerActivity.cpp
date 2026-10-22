@@ -16,7 +16,6 @@
 #include "NetworkStartup.h"
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
-#include "activities/network/CalibreConnectActivity.h"
 #include "components/SubpageLayout.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -124,9 +123,7 @@ void CrossPointWebServerActivity::onExit() {
 
 void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) {
   const char* modeName = "Join Network";
-  if (mode == NetworkMode::CONNECT_CALIBRE) {
-    modeName = "Connect to Calibre";
-  } else if (mode == NetworkMode::CREATE_HOTSPOT) {
+  if (mode == NetworkMode::CREATE_HOTSPOT) {
     modeName = "Create Hotspot";
 #if FREEINK_CAP_USB_MSC
   } else if (mode == NetworkMode::USB_DRIVE) {
@@ -144,21 +141,6 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
 
   networkMode = mode;
   isApMode = (mode == NetworkMode::CREATE_HOTSPOT);
-
-  if (mode == NetworkMode::CONNECT_CALIBRE) {
-    startActivityForResultWith<CalibreConnectActivity>([this](const ActivityResult& result) {
-      state = WebServerActivityState::MODE_SELECTION;
-
-      startActivityForResultWith<NetworkModeSelectionActivity>([this](const ActivityResult& result) {
-        if (result.isCancelled) {
-          onGoHome();
-        } else {
-          onNetworkModeSelected(std::get<NetworkModeResult>(result.data).mode);
-        }
-      });
-    });
-    return;
-  }
 
   if (mode == NetworkMode::JOIN_NETWORK) {
     // STA mode - launch WiFi selection
@@ -305,6 +287,13 @@ void CrossPointWebServerActivity::startWebServer() {
 void CrossPointWebServerActivity::loop() {
   // Handle different states
   if (state == WebServerActivityState::SERVER_RUNNING) {
+    // Check the main loop's input frame first: the request loop below calls
+    // mappedInput.update() again, which drops this frame's swipe/tap events.
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasHomeGesture()) {
+      onGoHome();
+      return;
+    }
+
     // Handle DNS requests for captive portal (AP mode only)
     if (isApMode && dnsServer) {
       dnsServer->processNextRequest();
@@ -390,12 +379,6 @@ void CrossPointWebServerActivity::loop() {
         }
       }
       lastHandleClientTime = millis();
-    }
-
-    // Also check outside the request-processing loop.
-    if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasHomeGesture()) {
-      onGoHome();
-      return;
     }
   }
 }

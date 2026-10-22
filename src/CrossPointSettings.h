@@ -47,6 +47,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     COVER_CUSTOM = 5,
     QUICK_RESUME = 6,
     TRANSPARENT = 7,
+    CLOCK = 8,  // UT37 only (light sleep + per-minute repaint); keep it last
     SLEEP_SCREEN_MODE_COUNT
   };
   enum SLEEP_SCREEN_COVER_MODE { FIT = 0, CROP = 1, SLEEP_SCREEN_COVER_MODE_COUNT };
@@ -193,6 +194,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     REFRESH_15 = 3,
     REFRESH_30 = 4,
     REFRESH_NEVER = 5,
+    // UT37 steps, appended so stored values keep their meaning.
+    REFRESH_12 = 6,
+    REFRESH_24 = 7,
+    REFRESH_36 = 8,
     REFRESH_FREQUENCY_COUNT
   };
 
@@ -204,7 +209,25 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FORCE_REFRESH = 3,
     FOOTNOTES = 4,
     PWR_CONFIRM = 5,
+    POWER_OFF = 6,  // UT37 function key: full power-off (deep sleep, long press to wake)
+    KEY_FRONTLIGHT = 7,  // UT37: toggle the frontlight
+    KEY_AUTO_TURN = 8,   // UT37: toggle auto page turn
+    KEY_BLUETOOTH = 9,   // UT37: toggle Bluetooth
+    KEY_BACK = 10,       // UT37: acts as the Back button
     SHORT_PWRBTN_COUNT
+  };
+
+  // UT37 function key long press. Persisted by value: append only.
+  enum LONG_PWRBTN {
+    LONG_SLEEP = 0,
+    LONG_POWER_OFF = 1,
+    LONG_FRONTLIGHT = 2,
+    LONG_AUTO_TURN = 3,
+    LONG_BLUETOOTH = 4,
+    LONG_PAGE_TURN = 5,  // retired from the menu; kept so saved values keep meaning
+    LONG_FOOTNOTES = 6,
+    LONG_NONE = 7,
+    LONG_PWRBTN_COUNT
   };
 
   // Long-press Confirm action while reading an EPUB. The setting cycles through these values.
@@ -219,6 +242,25 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_MENU_READER_MENU = 4,
     LONG_PRESS_MENU_FUNCTION_COUNT
   };
+
+  // Reader "Touch long-press": one action per 3x3 screen zone (row-major,
+  // top-left first). Persisted by value, so new actions append at the end.
+  enum TOUCH_LONG_PRESS_ACTION : uint8_t {
+    TLP_NONE = 0,
+    TLP_READER_MENU = 1,
+    TLP_TOC = 2,
+    TLP_FOOTNOTES = 3,
+    TLP_BOOKMARK_LIST = 4,
+    TLP_TOGGLE_BOOKMARK = 5,
+    TLP_TEXT_SETTINGS = 6,
+    TLP_DICTIONARY = 7,
+    TLP_AUTO_TURN = 8,
+    TLP_GO_TO_PERCENT = 9,
+    TLP_GO_HOME = 10,
+    TLP_SYNC = 11,
+    TOUCH_LONG_PRESS_ACTION_COUNT
+  };
+  static constexpr int TOUCH_LONG_PRESS_ZONES = 9;
 
   // Hide battery percentage
   enum HIDE_BATTERY_PERCENTAGE { HIDE_NEVER = 0, HIDE_READER = 1, HIDE_ALWAYS = 2, HIDE_BATTERY_PERCENTAGE_COUNT };
@@ -264,13 +306,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   // Daily reading goal target (used by the Reading Analytics suite to mark
   // goal-met days, streaks and the reading profile).
-  enum DAILY_GOAL_TARGET {
-    DAILY_GOAL_15_MIN = 0,
-    DAILY_GOAL_30_MIN = 1,
-    DAILY_GOAL_45_MIN = 2,
-    DAILY_GOAL_60_MIN = 3,
-    DAILY_GOAL_TARGET_COUNT
-  };
 
   // Sleep screen settings
   uint8_t sleepScreen = LIGHT;
@@ -304,12 +339,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t extraParagraphSpacing = 0;
   uint8_t textAntiAliasing = 1;
   uint8_t fakeBold = SYNTHETIC_BOLD_STANDARD;
-  uint8_t readingBackgroundEnabled = 0;
   uint8_t readingGuideLineEnabled = 0;
   uint8_t readingGuideLineStyle = static_cast<uint8_t>(readingGuideLine::Style::ShortDash);
   int8_t readingGuideLineOffset = READING_GUIDE_LINE_OFFSET_DEFAULT;
   // Short power button click behaviour
+#if FREEINK_DEVICE_UT37
+  uint8_t shortPwrBtn = KEY_BACK;
+#else
   uint8_t shortPwrBtn = IGNORE;
+#endif
   // EPUB reading orientation settings
   // 0 = portrait (default), 1 = landscape clockwise, 2 = inverted, 3 = landscape counter-clockwise
   uint8_t orientation = PORTRAIT;
@@ -360,6 +398,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Long-press Confirm function in EPUB reader (cycles through LONG_PRESS_MENU_FUNCTION values).
   // Defaults to Disabled so shortcut-based bookmark toggling remains opt-in.
   uint8_t longPressMenuFunction = LP_MENU_DISABLED;
+  // Touch long-press action per zone; default: center opens the reader menu,
+  // top-right toggles a bookmark. Saved as the "touchLongPress" JSON array.
+  uint8_t touchLongPress[TOUCH_LONG_PRESS_ZONES] = {TLP_NONE, TLP_NONE,        TLP_TOGGLE_BOOKMARK,
+                                                    TLP_NONE, TLP_READER_MENU, TLP_NONE,
+                                                    TLP_NONE, TLP_NONE,        TLP_NONE};
   // UI Theme
   uint8_t uiTheme = INX;
   // Show front-button hints along the bottom edge on non-touch devices.
@@ -371,8 +414,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t standbyShortcutEnabled = 1;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
-  // Power button return from footnotes (1 = enabled, 0 = disabled)
-  uint8_t pwrBtnFootnoteBack = 1;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)
   uint8_t embeddedStyle = 1;
   // Focus Reading - emphasizes the first part of words with bold
@@ -415,7 +456,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
                                                        (uint32_t{1} << PIXEL_SWITCH_APP_ID);
   uint32_t hiddenAppsMask = DEFAULT_HIDDEN_APPS_MASK;
   uint8_t appsCatalogVersion = APPS_CATALOG_VERSION;
-  uint8_t buddyClaimed = 0;
   // Image rendering mode in EPUB reader
   uint8_t imageRendering = IMAGES_DISPLAY;
   // Tilt-based page turning (X3 only — requires QMI8658 IMU)
@@ -428,9 +468,18 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t showReaderMenu = READER_MENU_TAP;
   // Frontlight quick-panel state. Brightness and warmth remain persisted even
   // when restore-on-wake is disabled.
+#if FREEINK_DEVICE_UT37
+  uint8_t frontlightBrightness = 4;  // first-ever level: the dimmest of the ten UT37 steps
+#else
   uint8_t frontlightBrightness = 60;
+#endif
   uint8_t frontlightWarmth = 50;
   uint8_t frontlightOn = 0;
+  // Reader auto page turn speed in pages per minute (control center -/+). Whether
+  // it is running is runtime-only; see util/AutoPageTurn.h.
+  uint8_t autoPageTurnRate = 3;
+  // UT37 function key long press action (LONG_PWRBTN).
+  uint8_t longPwrBtn = LONG_SLEEP;
   uint8_t frontlightRestoreOnWake = 1;
   // Language setting (Language enum index). Fresh devices start in English and
   // choose their UI language and matching content profile in the startup guide.
@@ -441,22 +490,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   ContentProfile contentProfile = ContentProfile::Global;
   // Exact version of the startup guide last completed. Zero/missing means never completed.
   uint8_t onboardingVersion = 0;
-  // Keyboard layouts the user can reach, using keyboard_layouts::ALL table bits.
-  // 0 means "not configured", resolved to the UI language's layout plus English.
-  // Any other value is an explicit choice and is used as-is: the language of the
-  // books someone reads is not necessarily the language of their UI.
-  // See keyboard_layouts:: for the bit assignment and the defaulting rules.
-  uint16_t keyboardLayouts = 0;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
   // OTA update channel preference (0 = stable, 1 = nightly).
   uint8_t otaNightlyEnabled = 0;
   // Reading Analytics suite settings.
-  // Daily reading goal target (DAILY_GOAL_TARGET enum index).
-  uint8_t dailyGoalTarget = DAILY_GOAL_30_MIN;
-  // Achievement tracking + unlock popups (1 = enabled, 0 = disabled).
-  uint8_t achievementsEnabled = 1;
-  uint8_t achievementPopups = 0;
 
   static constexpr uint8_t MIN_SLEEP_TIMEOUT_MINUTES = 1;
   static constexpr uint8_t SLEEP_TIMEOUT_NEVER_MINUTES = 31;
@@ -520,6 +558,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Keep the UI language, service region, and regional-app defaults in sync.
   // The caller persists the resulting settings.
   void applyLanguageSelection(uint8_t languageIndex);
+  // Clamp uiTheme to the themes this board can lay out (UT37: Inx only).
+  // Returns true when it changed the value.
+  bool enforceBoardTheme();
+  // UT37: pin the values whose settings rows were removed (see
+  // ut37/設定檢視表.csv). Returns true when anything changed.
+  bool enforceBoardSettings();
   bool loadFromFile();
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);
@@ -535,7 +579,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   float getReaderLineCompression() const;
   unsigned long getSleepTimeoutMs() const;
   int getRefreshFrequency() const;
-  // Daily reading goal in milliseconds, derived from dailyGoalTarget.
+  // Reading time that makes a day count for streaks and the heatmap. The
+  // daily-goal setting is gone: any real reading (one minute) counts.
   uint64_t getDailyGoalMs() const;
 };
 

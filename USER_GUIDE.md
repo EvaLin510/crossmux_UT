@@ -5,7 +5,6 @@ Welcome to the **CrossPoint** firmware. This guide outlines the hardware control
 - [CrossPoint User Guide](#crosspoint-user-guide)
   - [1. Hardware Overview](#1-hardware-overview)
     - [Button Layout](#button-layout)
-    - [Taking a Screenshot](#taking-a-screenshot)
     - [Frontlight (X4 Pro only)](#frontlight-x4-pro-only)
   - [2. Power \& Startup](#2-power--startup)
     - [Power On / Off](#power-on--off)
@@ -64,12 +63,6 @@ The device utilises the standard buttons on the Xteink X4 (in the same layout as
 | **Right Side**  | **Power**, **Side Up**, **Side Down**, **Reset** |
 
 Button layout can be customized in the **[Controls Settings](#363-controls)**.
-
-### Taking a Screenshot
-
-When the Power button and the lower side button (Side Down) are pressed at the same time, it will take a screenshot and save it in the folder `screenshots/`.
-
-Alternatively, while reading a book, press the **Confirm** button to open the reader menu and select **Take screenshot**.
 
 ### Frontlight (X4 Pro only)
 
@@ -136,7 +129,7 @@ See the [web server docs](./docs/webserver.md) for more information on how to co
 
 The web interface also supports **WebDAV**, allowing you to mount the device as a network drive and manage files directly from your computer's file manager.
 
-Download links for files already on the device are available in the web interface, so you can retrieve books or screenshots over Wi-Fi without connecting a cable.
+Download links for files already on the device are available in the web interface, so you can retrieve books over Wi-Fi without connecting a cable.
 
 A **Wi-Fi signal strength indicator** (dBm) is displayed on-screen during joined-network web server sessions.
 
@@ -662,8 +655,6 @@ Available options include:
 - **Auto Turn (Pages Per Minute)** – Choose Off, a preset speed (3, 6, or 12), or a custom speed from 1–30
   pages per minute for hands-free reading. The custom speed is remembered only while the current book remains open.
 - **Go to %** – Jump to a specific position in the book by percentage.
-- **Take screenshot** – Save a screenshot of the current page to the `screenshots/` folder.
-- **Show page as QR** – Display a QR code encoding the current reading position.
 - **Go Home** – Close the book and return to the Home screen.
 - **Sync Progress** – Push or pull reading progress with a KOReader sync server (see [KOReader Sync Quick Setup](#367-koreader-sync-quick-setup)).
 - **Delete Book Cache** – Clear the cached layout data for the current book, forcing a re-index on next open.

@@ -12,7 +12,6 @@ namespace fui = freeink::ui;
 namespace {
 constexpr StrId menuItems[NetworkModeSelectionActivity::MENU_ITEM_COUNT] = {
     StrId::STR_JOIN_NETWORK,
-    StrId::STR_CALIBRE_WIRELESS,
     StrId::STR_CREATE_HOTSPOT,
 #if FREEINK_CAP_USB_MSC
     StrId::STR_USB_DRIVE,
@@ -20,15 +19,22 @@ constexpr StrId menuItems[NetworkModeSelectionActivity::MENU_ITEM_COUNT] = {
 };
 constexpr StrId menuDescs[NetworkModeSelectionActivity::MENU_ITEM_COUNT] = {
     StrId::STR_JOIN_DESC,
-    StrId::STR_CALIBRE_DESC,
     StrId::STR_HOTSPOT_DESC,
 #if FREEINK_CAP_USB_MSC
     StrId::STR_USB_DRIVE_DESC,
 #endif
 };
+// Mode for each row; the row index no longer equals the NetworkMode value
+// since the Calibre row was removed.
+constexpr NetworkMode menuModes[NetworkModeSelectionActivity::MENU_ITEM_COUNT] = {
+    NetworkMode::JOIN_NETWORK,
+    NetworkMode::CREATE_HOTSPOT,
+#if FREEINK_CAP_USB_MSC
+    NetworkMode::USB_DRIVE,
+#endif
+};
 constexpr UIIcon menuIcons[NetworkModeSelectionActivity::MENU_ITEM_COUNT] = {
     UIIcon::Wifi,
-    UIIcon::Library,
     UIIcon::Hotspot,
 #if FREEINK_CAP_USB_MSC
     UIIcon::Usb,
@@ -59,7 +65,8 @@ void NetworkModeSelectionActivity::activateIndex(const int index) {
   app.clearTapFlash();
   nav.selected = index;
 
-  onModeSelected(static_cast<NetworkMode>(index));
+  if (index < 0 || index >= MENU_ITEM_COUNT) return;
+  onModeSelected(menuModes[index]);
 }
 
 void NetworkModeSelectionActivity::buildScreen(UiScreen& screen) {

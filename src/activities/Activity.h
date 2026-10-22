@@ -13,7 +13,6 @@
 #include "MappedInputManager.h"
 #include "RenderLock.h"
 #include "activities/MainTab.h"
-#include "util/ScreenshotInfo.h"
 
 struct Rect;
 
@@ -63,7 +62,6 @@ class Activity {
   virtual bool mainTabBackReturnsToTabs() const { return true; }
   virtual void selectMainTabContentEdge(MainTabContentEdge) {}
   bool usesMainTabBar() const;
-  virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 
   // Start a new activity without destroying the current one
   // Note: requestUpdate() will be invoked automatically once resultHandler finishes

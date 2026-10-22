@@ -21,23 +21,33 @@ LanguageSelectActivity::LanguageSelectActivity(GfxRenderer& renderer, MappedInpu
 void LanguageSelectActivity::onEnter() {
   UiListActivity::onEnter();
 
-  // Initial onboarding offers Simplified Chinese first without changing the
-  // active language until the user confirms. Other entry modes keep the
-  // current language selected.
+  // Initial onboarding offers Chinese first (Traditional on UT37) without
+  // changing the active language until the user confirms. Other entry modes
+  // keep the current language selected.
+#if FREEINK_DEVICE_UT37
+  constexpr Language kOnboardingLanguage = Language::ZH_TW;
+#else
+  constexpr Language kOnboardingLanguage = Language::ZH_CN;
+#endif
   const auto selectedLang =
-      mode_ == Mode::Initial ? static_cast<uint8_t>(Language::ZH_CN) : static_cast<uint8_t>(I18N.getLanguage());
-  const auto* begin = std::begin(SORTED_LANGUAGE_INDICES);
-  const auto* end = std::end(SORTED_LANGUAGE_INDICES);
+      mode_ == Mode::Initial ? static_cast<uint8_t>(kOnboardingLanguage) : static_cast<uint8_t>(I18N.getLanguage());
+
+  visibleCount = 0;
+  for (const uint8_t lang : SORTED_LANGUAGE_INDICES) {
+    if (I18n::isLanguageAvailable(static_cast<Language>(lang))) visibleLanguages[visibleCount++] = lang;
+  }
+  const auto* begin = visibleLanguages;
+  const auto* end = visibleLanguages + visibleCount;
   const auto* it = std::find(begin, end, selectedLang);
   nav.selected = (it != end) ? static_cast<int>(std::distance(begin, it)) : 0;
 
   // Built once here rather than every buildScreen() call: labels are static,
   // and the "Selected" marker can't go stale mid-visit since activateIndex()
   // finishes the activity immediately on selection.
-  for (int i = 0; i < totalItems; ++i) {
+  for (int i = 0; i < visibleCount; ++i) {
     fui::ListItem item;
-    item.label = I18N.getLanguageName(static_cast<Language>(SORTED_LANGUAGE_INDICES[i]));
-    if (SORTED_LANGUAGE_INDICES[i] == selectedLang) {
+    item.label = I18N.getLanguageName(static_cast<Language>(visibleLanguages[i]));
+    if (visibleLanguages[i] == selectedLang) {
       item.value = tr(STR_SELECTED);
     }
     item.actionValue = static_cast<int16_t>(i);
@@ -52,7 +62,8 @@ void LanguageSelectActivity::activateIndex(const int index) {
   // unrelated element on the next render.
   app.clearTapFlash();
   nav.selected = index;
-  const uint8_t langIndex = SORTED_LANGUAGE_INDICES[index];
+  if (index < 0 || index >= visibleCount) return;
+  const uint8_t langIndex = visibleLanguages[index];
 
   const uint8_t previousLanguage = SETTINGS.language;
   const auto previousContentProfile = SETTINGS.contentProfile;
@@ -63,12 +74,13 @@ void LanguageSelectActivity::activateIndex(const int index) {
   const uint8_t previousOnboardingVersion = SETTINGS.onboardingVersion;
   SETTINGS.applyLanguageSelection(langIndex);
   const Language language = static_cast<Language>(langIndex);
-  const bool simplifiedChinese = language == Language::ZH_CN;
+  // Both Chinese UIs default to UTC+8 on first setup.
+  const bool chinese = language == Language::ZH_CN || language == Language::ZH_TW;
   switch (mode_) {
     case Mode::Settings:
       break;
     case Mode::Initial:
-      SETTINGS.clockUtcOffsetQ = simplifiedChinese ? 80 : 48;
+      SETTINGS.clockUtcOffsetQ = chinese ? 80 : 48;
       SETTINGS.fontFamily = CrossPointSettings::NOTOSANS;
       SETTINGS.fontPointSize = 12;
       SETTINGS.onboardingVersion = CrossPointSettings::CURRENT_ONBOARDING_VERSION;
@@ -86,8 +98,8 @@ void LanguageSelectActivity::activateIndex(const int index) {
     SETTINGS.hiddenAppsMask = previousHiddenAppsMask;
     SETTINGS.onboardingVersion = previousOnboardingVersion;
     LOG_ERR("LANG", "Failed to save language selection");
-    for (int i = 0; i < totalItems; ++i) {
-      rowItems[i].value = SORTED_LANGUAGE_INDICES[i] == langIndex ? tr(STR_SELECTED) : nullptr;
+    for (int i = 0; i < visibleCount; ++i) {
+      rowItems[i].value = visibleLanguages[i] == langIndex ? tr(STR_SELECTED) : nullptr;
     }
     requestUpdate();
     return;
@@ -131,7 +143,7 @@ void LanguageSelectActivity::buildScreen(UiScreen& screen) {
   // rowItems was built once in onEnter() and is reused here on every repaint.
   fui::ListProps props;
   props.items = rowItems;
-  props.count = static_cast<uint16_t>(totalItems);
+  props.count = static_cast<uint16_t>(visibleCount);
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
   syncListViewport(screen, props);

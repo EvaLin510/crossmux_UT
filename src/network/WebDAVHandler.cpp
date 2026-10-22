@@ -385,7 +385,7 @@ void WebDAVHandler::handlePut(WebServer& s) {
     return;
   }
 
-  clearBookCache(path.c_str());
+  clearBookCacheKeepProgress(path.c_str());
   s.send(_putExisted ? 204 : 201);
   LOG_DBG("DAV", "PUT complete: %s", path.c_str());
 }
@@ -543,11 +543,15 @@ void WebDAVHandler::handleMove(WebServer& s) {
     return;
   }
 
-  clearBookCache(srcPath.c_str());
   bool success = file.rename(dstPath.c_str());
   file.close();
 
   if (success) {
+    // Carry the reading cache (progress.bin) to the new path-keyed directory,
+    // replacing the stale cache of a book the move overwrote.
+    clearBookCache(dstPath.c_str());
+    relocateBookArtifacts(srcPath.c_str(), dstPath.c_str());
+    relocateBookReferences(srcPath.c_str(), dstPath.c_str());
     s.send(dstExists ? 204 : 201);
   } else {
     s.send(500, "text/plain", "Move failed");

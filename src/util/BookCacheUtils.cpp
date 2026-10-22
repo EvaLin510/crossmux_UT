@@ -9,6 +9,7 @@
 #include "CrossPointState.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
+#include "activities/reader/ProgressFile.h"
 #include "util/BookmarkUtil.h"
 
 namespace {
@@ -52,6 +53,33 @@ bool clearBookCache(const std::string& path) {
   }
   if (!cleared) return false;
   LOG_DBG("BookCache", "Done checking metadata cache for: %s", path.c_str());
+  return true;
+}
+
+bool clearBookCacheKeepProgress(const std::string& path) {
+  const std::string cachePath = bookCachePath(path);
+  if (cachePath.empty()) return true;
+
+  // progress.bin is at most 10 bytes (EPUB); TXT writes 8, XTC 4. A stack buffer
+  // avoids a heap copy, and a file that fills it is an unknown format, not restored.
+  uint8_t progress[16];
+  int progressSize = 0;
+  {
+    HalFile f;
+    if (Storage.openFileForRead("BookCache", cachePath + "/progress.bin", f)) {
+      progressSize = f.read(progress, sizeof(progress));
+    }
+  }
+
+  if (!clearBookCache(path)) return false;
+  if (progressSize <= 0 || progressSize >= static_cast<int>(sizeof(progress))) return true;
+
+  if ((!Storage.exists(cachePath.c_str()) && !Storage.mkdir(cachePath.c_str())) ||
+      !ProgressFile::writeAtomic(cachePath, progress, static_cast<size_t>(progressSize))) {
+    LOG_ERR("BookCache", "Failed to restore progress for: %s", path.c_str());
+    return false;
+  }
+  LOG_DBG("BookCache", "Kept progress across cache clear for: %s", path.c_str());
   return true;
 }
 

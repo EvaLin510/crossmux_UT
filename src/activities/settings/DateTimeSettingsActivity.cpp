@@ -11,7 +11,6 @@
 #include <string>
 
 #include "ClockOffsetActivity.h"
-#include "ClockSyncActivity.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -135,16 +134,6 @@ void DateTimeSettingsActivity::activateMenuItem() {
       SETTINGS.saveToFile();
       requestUpdate();
       break;
-    case MenuItem::SyncNow: {
-      // ActivityManager owns the sync screen across frames; stack lifetime is insufficient.
-      auto activity = makeUniqueNoThrow<ClockSyncActivity>(renderer, mappedInput);
-      if (!activity) {
-        LOG_ERR("CLK", "OOM: ClockSyncActivity (%u bytes)", static_cast<unsigned>(sizeof(ClockSyncActivity)));
-        return;
-      }
-      startActivityForResult(std::move(activity), [this](const ActivityResult&) { requestUpdate(); });
-      break;
-    }
     case MenuItem::Count:
       break;
   }
@@ -280,6 +269,13 @@ void DateTimeSettingsActivity::buildManualScreen(UiScreen& screen) {
     props.increment = ACTION_STEP;
     props.decrementValue = static_cast<int16_t>(-(index + 1));
     props.incrementValue = static_cast<int16_t>(index + 1);
+#if FREEINK_DEVICE_UT37
+    // Same look as the slider dialogs: rounded-square buttons with -/+ at
+    // body-text size (12 px, 2 px strokes).
+    props.controlSize = 12;
+    props.controlStroke = 2;
+    props.buttonRadius = 6;
+#endif
     screen.stepperRow(props);
   }
 }
@@ -329,7 +325,7 @@ void DateTimeSettingsActivity::renderMenu() {
       renderer, Rect{0, contentTop, pageWidth, contentHeight}, MENU_ITEM_COUNT, selectedMenuItem,
       [](int index) {
         static constexpr StrId NAMES[] = {StrId::STR_AUTO_TIME, StrId::STR_DATE_AND_TIME, StrId::STR_TIME_ZONE,
-                                          StrId::STR_24_HOUR_TIME, StrId::STR_CLOCK_SYNC_NOW};
+                                          StrId::STR_24_HOUR_TIME};
         return std::string(I18N.get(NAMES[index]));
       },
       nullptr, nullptr,
@@ -351,17 +347,6 @@ void DateTimeSettingsActivity::renderMenu() {
           }
           case MenuItem::Hour24:
             return std::string(SETTINGS.clockFormat == 0 ? tr(STR_STATE_ON) : tr(STR_STATE_OFF));
-          case MenuItem::SyncNow:
-            switch (halClock.syncState()) {
-              case ClockSyncState::Idle:
-                return std::string();
-              case ClockSyncState::Syncing:
-                return std::string(tr(STR_CLOCK_SYNCING));
-              case ClockSyncState::Succeeded:
-                return std::string(tr(STR_CLOCK_SYNC_OK));
-              case ClockSyncState::Failed:
-                return std::string(tr(STR_CLOCK_SYNC_FAIL));
-            }
           case MenuItem::Count:
             return std::string();
         }

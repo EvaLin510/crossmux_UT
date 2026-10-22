@@ -1,5 +1,6 @@
 #pragma once
 #include <Epub.h>
+#include <Txt.h>
 
 #include <memory>
 #include <string>
@@ -14,6 +15,9 @@ class EpubReaderBookmarksActivity final : public UiListActivity {
   // the title keeps its legacy draw, and OptionPopup keeps its legacy overlay
   // rendering for the delete confirmation.
   std::shared_ptr<Epub> epub;
+  // TXT books: bookmarks carry a byte offset (visibleTextOffset) and the row
+  // subtitle names the TXT chapter. Owned by the reader, which outlives this list.
+  const Txt* txt = nullptr;
   std::string epubPath;
   std::vector<BookmarkEntry> bookmarks;
   // Row buffers derived from `bookmarks`, rebuilt only when it changes
@@ -29,6 +33,7 @@ class EpubReaderBookmarksActivity final : public UiListActivity {
  public:
   explicit EpubReaderBookmarksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                        const std::shared_ptr<Epub>& epub, const std::string& epubPath);
+  explicit EpubReaderBookmarksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const Txt& txt);
   void onEnter() override;
   void render(RenderLock&&) override;
 

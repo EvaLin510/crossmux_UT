@@ -15,6 +15,8 @@
 #include "BleInput.h"
 #include "I18n.h"
 #include "RecentBooksStore.h"
+#include "components/PositionBar.h"
+#include "components/StatusStrip.h"
 #include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
@@ -121,10 +123,71 @@ void BaseTheme::fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t
   }
 }
 
+namespace {
+#if FREEINK_DEVICE_UT37
+constexpr bool kReaderTopStrip = true;
+
+// UT37: Feather-style battery (user-supplied battery.svg) with the percentage
+// written inside in the status-bar font. icon.width covers body + gap + nub:
+// a 1 px rounded body, a 1 px gap and a 2 px nub over the middle third. While
+// charging, the same body is drawn and a bolt (battery-charging.svg) sits just
+// left of the icon.
+void drawBatteryWithPercentInside(const GfxRenderer& renderer, const Rect icon, const uint16_t percentage,
+                                  const bool showPercentage) {
+  constexpr int stroke = 1;
+  constexpr int nubWidth = 2;
+  constexpr int nubGap = 1;
+  const int bodyWidth = icon.width - nubWidth - nubGap;
+  if (bodyWidth <= 2 * stroke || icon.height <= 2 * stroke) return;
+  const int x = icon.x;
+  const int y = icon.y;
+  const int h = icon.height;
+  // Body: 1 px frame with its four corner pixels left out (rounded look).
+  renderer.fillRect(x + 1, y, bodyWidth - 2, stroke);
+  renderer.fillRect(x + 1, y + h - stroke, bodyWidth - 2, stroke);
+  renderer.fillRect(x, y + 1, stroke, h - 2);
+  renderer.fillRect(x + bodyWidth - stroke, y + 1, stroke, h - 2);
+  const int nubHeight = std::max(3, h / 3);
+  renderer.fillRect(x + bodyWidth + nubGap, y + (h - nubHeight) / 2, nubWidth, nubHeight);
+
+  if (gpio.isUsbConnected()) {
+    // 5x9 bolt, 2 px left of the body.
+    static constexpr uint8_t kBolt[9] = {0x18, 0x30, 0x30, 0x60, 0xF8, 0x18, 0x30, 0x30, 0x60};
+    const int boltX = x - 2 - 5;
+    const int boltY = y + (h - 9) / 2;
+    for (int row = 0; row < 9; ++row) {
+      for (int col = 0; col < 5; ++col) {
+        if (kBolt[row] & (0x80 >> col)) renderer.drawPixel(boltX + col, boltY + row, true);
+      }
+    }
+  }
+  if (!showPercentage) return;
+
+  const int innerX = x + stroke;
+  const int innerY = y + stroke;
+  const int innerWidth = bodyWidth - 2 * stroke;
+  const int innerHeight = h - 2 * stroke;
+  const std::string text = std::to_string(std::min<int>(percentage, 100));
+  // Glyph inks 1 px apart, centred on their ink box: "100" leaves exactly
+  // 1 px to the frame on every side (InxMetrics battery size).
+  const int textWidth = status_strip::drawInkRun(renderer, 0, 0, text.c_str(), 1, false);
+  const int inkTop = innerY + (innerHeight - status_strip::digitInkHeight(renderer)) / 2;
+  const GfxRenderer::ClipScope clip(renderer, innerX, innerY, innerWidth, innerHeight);
+  status_strip::drawInkRun(renderer, innerX + (innerWidth - textWidth + 1) / 2, inkTop, text.c_str(), 1);
+}
+#else
+constexpr bool kReaderTopStrip = false;
+#endif
+}  // namespace
+
 void BaseTheme::drawBatteryLeft(const GfxRenderer& renderer, Rect rect, const bool showPercentage) const {
   // Left aligned: icon on left, percentage on right (reader mode)
   const uint16_t percentage = powerManager.getBatteryPercentage();
   const int y = rect.y + 6;
+#if FREEINK_DEVICE_UT37
+  drawBatteryWithPercentInside(renderer, Rect{rect.x, y, rect.width, rect.height}, percentage, showPercentage);
+  return;
+#endif
 
   if (showPercentage) {
     const auto percentageText = std::to_string(percentage) + "%";
@@ -140,6 +203,10 @@ void BaseTheme::drawBatteryLeft(const GfxRenderer& renderer, Rect rect, const bo
 void BaseTheme::drawBatteryRight(const GfxRenderer& renderer, Rect rect, const bool showPercentage) const {
   const uint16_t percentage = powerManager.getBatteryPercentage();
   const int y = rect.y + 6;
+#if FREEINK_DEVICE_UT37
+  drawBatteryWithPercentInside(renderer, Rect{rect.x, y, rect.width, rect.height}, percentage, showPercentage);
+  return;
+#endif
 
   if (showPercentage) {
     const auto percentageText = std::to_string(percentage) + "%";
@@ -324,6 +391,12 @@ void BaseTheme::drawSideScrollBar(const GfxRenderer& renderer, Rect rect, const 
                                   const int pageItems) const {
   if (itemCount <= pageItems || pageItems <= 0 || rect.height <= 0) return;
   const auto& metrics = UITheme::getInstance().getMetrics();
+#if FREEINK_DEVICE_UT37
+  // Shared UT37 position bar: 1 px track, 3 px thumb, inside the right edge.
+  position_bar::drawVertical(renderer, rect.x + rect.width - metrics.scrollBarRightOffset - 1, rect.y, rect.height,
+                             itemCount, pageItems, pageStartIndex);
+  return;
+#endif
   const int totalPages = 1 + (itemCount - 1) / pageItems;
   const int currentPage = std::clamp(pageStartIndex / pageItems, 0, totalPages - 1);
   const int barHeight = std::max(1, static_cast<int>((static_cast<int64_t>(rect.height) * pageItems) / itemCount));
@@ -892,6 +965,9 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   // Draw Progress Text
   const auto screenHeight = renderer.getScreenHeight();
   auto textY = screenHeight - UITheme::getInstance().getStatusBarHeight() - orientedMarginBottom - paddingBottom - 4;
+#if FREEINK_DEVICE_UT37
+  textY = screenHeight - UITheme::kReaderFooterTextFromBottom - paddingBottom;
+#endif
 
   int leftClusterX = metrics.statusBarHorizontalMargin + orientedMarginLeft + 1;
   int rightClusterX = renderer.getScreenWidth() - metrics.statusBarHorizontalMargin - orientedMarginRight;
@@ -914,7 +990,8 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     char progressStr[32];
 
     // Draw the estimate marker separately so it can use the next UI font size.
-    const bool showEstimate = pageCountEstimated && sb.showChapterPageCount;
+    // UT37 drops the "~" estimate marker from its footer.
+    const bool showEstimate = !FREEINK_DEVICE_UT37 && pageCountEstimated && sb.showChapterPageCount;
 
     if (sb.showBookProgressPercent && sb.showChapterPageCount) {
       snprintf(progressStr, sizeof(progressStr), "%d/%d  %.0f%%", currentPage, pageCount, bookProgress);
@@ -963,14 +1040,31 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
       progress = (pageCount > 0) ? (static_cast<float>(currentPage) / pageCount) * 100 : 0;
     }
     const int barWidth = progressBarMaxWidth * progress / 100;
+#if FREEINK_DEVICE_UT37
+    // UT37 keeps the bar thin everywhere: the reader (fillMargin) and the
+    // settings preview draw the same 2 px bar.
+    const int barHeight = sb.progressBarHeightPx;
+#else
     const int barHeight = sb.progressBarHeightPx + (fillMargin ? orientedMarginBottom - 1 : 0);
+#endif
     renderer.fillRect(barMarginLeft, progressBarY, barWidth, barHeight, true);
   }
 
   // Draw Battery
   const bool showBatteryPercentage = sb.showBatteryPercent;
 
-  if (sb.showBattery) {
+  // UT37: clock top-left and battery top-right in the strip the reader reserves
+  // (UITheme::getStatusBarTopHeight); the bottom lane keeps progress and title.
+  if constexpr (kReaderTopStrip) {
+    // The shared status_strip module draws them, so the reader matches every
+    // other screen.
+    // Drawn from the screen's top edge over the full width, with the same
+    // bounds as every other page, so the clock and battery do not shift by
+    // the viewable inset. The strip carries its own 3/6 px gaps.
+    status_strip::draw(renderer, 0, 0, renderer.getScreenWidth());
+  }
+
+  if (!kReaderTopStrip && sb.showBattery) {
     GUI.drawBatteryLeft(renderer,
                         Rect{leftClusterX + leftClusterWidth, textY, metrics.batteryWidth, metrics.batteryHeight},
                         showBatteryPercentage);
@@ -987,7 +1081,7 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   }
 
   // Draw the system clock on every board; an external RTC is optional.
-  if (sb.showsClock()) {
+  if (!kReaderTopStrip && sb.showsClock()) {
     char timeBuf[9];
     if (!TimeUtils::formatCurrentTime(timeBuf, sizeof(timeBuf), sb.clock12h)) {
       snprintf(timeBuf, sizeof(timeBuf), "--:--");

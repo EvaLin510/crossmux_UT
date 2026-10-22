@@ -65,8 +65,8 @@ void BluetoothSettingsActivity::rebuildRows() {
 
   if (view == View::Menu) {
     if (auto* row = addRow(tr(STR_BLUETOOTH), static_cast<int16_t>(Action::Toggle))) {
-      row->toggle = true;
-      row->toggleChecked = SETTINGS.bluetoothEnabled;
+      // Text On/Off like every other switch, not the slider graphic.
+      row->value = SETTINGS.bluetoothEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
     }
     if (!SETTINGS.bluetoothEnabled) return;
     addRow(tr(STR_BT_SCAN_PAIR), static_cast<int16_t>(Action::Scan));

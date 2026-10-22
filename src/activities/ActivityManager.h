@@ -15,7 +15,6 @@
 #include "MappedInputManager.h"
 #include "Memory.h"
 #include "activities/MainTab.h"
-#include "util/ScreenshotInfo.h"
 
 class Activity;    // forward declaration
 class RenderLock;  // forward declaration
@@ -104,7 +103,6 @@ class ActivityManager {
   void goToFileTransfer();
   void goToUsbDrive();
   void goToSettings();
-  void goToUglyAvatar();
   void goToReadingStatsMenu();
   void goToReadingStats();
   void goToInxRecent();
@@ -119,20 +117,8 @@ class ActivityManager {
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
   void goToCrashReport();
   void goToApps();
-  void goToSudoku();
-  void goToSokoban();
-  void goToGomoku();
-  void goToMinesweeper();
-  void goToPixelSwitch();
-  void goToCalculator();
-  void goToWoodfish();
   void goToAirPage();
-  void goToBuddy();
   void goToStandby();
-  void goToGame2048();
-#ifdef ENABLE_CHINESE_VERSION
-  void goToChineseChess();
-#endif
 #ifdef ENABLE_CHINESE_VERSION
   void goToWeRead();
 #endif
@@ -153,7 +139,6 @@ class ActivityManager {
   bool deferBluetoothStart() const;
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
-  ScreenshotInfo getScreenshotInfo() const;
 
   // Returns true when a Push/Pop/Replace is waiting for the render lock.
   // The render task can call this to abort a long render early and let the

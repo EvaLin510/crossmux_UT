@@ -57,7 +57,13 @@ bool AirPageWallpaper::writePart(const SelectedImage& selected) {
           !Storage.openFileForWrite("AIRP", kSleepImagePartPath, output)) {
         return false;
       }
+#if FREEINK_DEVICE_UT37
+      // UT37 has no grayscale waveform: a 2-bit BMP would show as flat
+      // posterized blocks, so dither to 1-bit from the full-tone source.
+      const bool converted = JpegToBmpConverter::jpegFileTo1BitBmpStream(input, output, /*crop=*/false);
+#else
       const bool converted = JpegToBmpConverter::jpegFileToBmpStream(input, output, /*crop=*/false);
+#endif
       output.flush();
       return converted;
     }

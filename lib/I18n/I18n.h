@@ -28,6 +28,7 @@ class I18n {
   // True if this build can actually render `lang`. A language whose strings are
   // compiled in but whose glyphs are not (e.g. ZH_CN in the non-CJK global
   // build) would render as garbled boxes, so it is reported as unavailable.
+  // UT37 additionally limits the list to EN, ZH_CN and ZH_TW.
   static bool isLanguageAvailable(Language lang);
 
   // Get all unique characters used in a specific language

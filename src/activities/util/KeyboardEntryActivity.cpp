@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <cstring>
 
-#include "KeyboardLayoutSet.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -116,12 +115,10 @@ const fui::KeyboardLayout URL_SNIPPET_LAYOUT{URL_SNIP_ROWS, 4};
 void KeyboardEntryActivity::onEnter() {
   Activity::onEnter();
   cursorPos = text.length();
-  // URL layers are EN-arranged app tables; everything else opens on the UI
-  // language's layout, or on an enabled one if the user switched that off.
-  layoutId = inputType == InputType::Url ? fui::KeyboardLayoutId::QwertyEn : keyboard_layouts::startingLayout();
-  // The key only earns its slot in the bottom row with somewhere to go.
-  const uint16_t enabledLayouts = keyboard_layouts::enabled();
-  showLangKey = (enabledLayouts & (enabledLayouts - 1)) != 0;
+  // English QWERTY only: the keyboard-layout picker is gone, so there is no
+  // language key to switch layouts.
+  layoutId = fui::KeyboardLayoutId::QwertyEn;
+  showLangKey = false;
   shifted = false;
   symbols = false;
   urlPanel = false;
@@ -276,7 +273,7 @@ bool KeyboardEntryActivity::activateValue(const int16_t value, const bool longPr
     case fui::QWERTY_KEY_LANG: {
       delPressCount = 0;
       hintVisible = false;
-      const fui::KeyboardLayoutId nextId = keyboard_layouts::next(layoutId);
+      const fui::KeyboardLayoutId nextId = fui::KeyboardLayoutId::QwertyEn;  // English only
       // The non-Latin tables draw the key even with one layout enabled; a
       // full-screen e-ink repaint for an unchanged keyboard costs a second.
       if (nextId == layoutId) return false;

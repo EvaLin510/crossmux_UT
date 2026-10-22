@@ -51,7 +51,12 @@ constexpr uint16_t UDP_PORTS[] = {54982, 48123, 39001, 44044, 59678};
 constexpr uint16_t LOCAL_UDP_PORT = 8134;
 constexpr size_t FILE_LIST_BATCH_CAPACITY = 1400;
 
-bool useChineseWebUi() { return I18N.getLanguage() == Language::ZH_CN; }
+// The web UI ships English and Simplified Chinese; Traditional users get the
+// Chinese pages too.
+bool useChineseWebUi() {
+  const Language language = I18N.getLanguage();
+  return language == Language::ZH_CN || language == Language::ZH_TW;
+}
 
 struct LocalizedPage {
   const char* data;
@@ -938,7 +943,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         String filePath = state.path;
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += state.fileName;
-        clearBookCache(filePath.c_str());
+        clearBookCacheKeepProgress(filePath.c_str());
       }
     }
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
@@ -1084,11 +1089,15 @@ void CrossPointWebServer::handleRename() const {
     return;
   }
 
-  clearBookCache(itemPath.c_str());
   const bool success = file.rename(newPath.c_str());
   file.close();
 
   if (success) {
+    // Carry the reading cache (progress.bin) to the new path-keyed directory,
+    // replacing any stale cache a former book at the new path left behind.
+    clearBookCache(newPath.c_str());
+    relocateBookArtifacts(itemPath.c_str(), newPath.c_str());
+    relocateBookReferences(itemPath.c_str(), newPath.c_str());
     LOG_DBG("WEB", "Renamed file: %s -> %s", itemPath.c_str(), newPath.c_str());
     server->send(200, "text/plain", "Renamed successfully");
   } else {
@@ -1177,11 +1186,15 @@ void CrossPointWebServer::handleMove() const {
     return;
   }
 
-  clearBookCache(itemPath.c_str());
   const bool success = file.rename(newPath.c_str());
   file.close();
 
   if (success) {
+    // Carry the reading cache (progress.bin) to the new path-keyed directory,
+    // replacing any stale cache a former book at the new path left behind.
+    clearBookCache(newPath.c_str());
+    relocateBookArtifacts(itemPath.c_str(), newPath.c_str());
+    relocateBookReferences(itemPath.c_str(), newPath.c_str());
     LOG_DBG("WEB", "Moved file: %s -> %s", itemPath.c_str(), newPath.c_str());
     server->send(200, "text/plain", "Moved successfully");
   } else {
@@ -1856,7 +1869,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             wsLastCompleteSize = 0;
             wsLastCompleteAt = millis();
             LOG_DBG("WS", "Zero-byte upload complete: %s", filePath.c_str());
-            clearBookCache(filePath.c_str());
+            clearBookCacheKeepProgress(filePath.c_str());
             wsServer->sendTXT(num, "DONE");
             wsLastProgressSent = 0;
             break;
@@ -1925,7 +1938,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         String filePath = wsUploadPath;
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += wsUploadFileName;
-        clearBookCache(filePath.c_str());
+        clearBookCacheKeepProgress(filePath.c_str());
 
         wsServer->sendTXT(num, "DONE");
         wsLastProgressSent = 0;

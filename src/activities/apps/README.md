@@ -11,22 +11,15 @@ The directory groups app implementations such as games, tools, reading analytics
 ```
 apps/
 ├── AppsMenuActivity.{h,cpp}   # dispatcher — see "Adding a new app" below
-├── GameUi.{h,cpp}             # shared helpers, game-only (centering math, elapsed-time format)
-├── GameSaveDebouncer.h        # 1.5s save debounce, used by sudoku/gomoku/minesweeper
-├── airpage/                    # cloud image display app
-├── sudoku/                    # one subdirectory per app, files keep the app-name prefix
-├── gomoku/
-├── chinese-chess/             # shown in the China content profile
-├── minesweeper/
-├── woodfish/                  # electronic woodfish with lazy SD checkpointing
-└── avatar/
+├── GameUi.{h,cpp}             # shared helpers (centering math, elapsed-time format)
+├── airpage/                   # cloud image display app; one subdirectory per app
 ```
 
-**Why the `Game*` prefix for `GameUi` and `GameSaveDebouncer`** — these helpers carry save-state and game-board semantics. They are used by Sudoku, Gomoku, and Minesweeper, not by Ugly Avatar (which is a single-shot generator). The name reflects what they actually do; do not rename them to `App*`.
+**Why the `Game*` prefix for `GameUi`** — it was written for the retired board games; its centering and elapsed-time helpers are now used by the reading-stats editors.
 
 **Why nested rather than flat** — apps share the "Apps" launcher concept and should be groupable. Reader and Settings are top-level features, so they sit flat at `activities/<feature>/`. This is a deliberate structural difference, not an inconsistency.
 
-**File naming inside an app directory** — keep the app-name prefix (`SudokuBoard.cpp`, not `Board.cpp`). The redundancy is intentional: grep, IDE search, and crash log lines stay unambiguous. No `namespace` wrapping for the same reason — class names are globally unique.
+**File naming inside an app directory** — keep the app-name prefix (`AirPageActivity.cpp`, not `Activity.cpp`). The redundancy is intentional: grep, IDE search, and crash log lines stay unambiguous. No `namespace` wrapping for the same reason — class names are globally unique.
 
 ---
 
@@ -76,28 +69,23 @@ Append to the existing definitions in `apps/AppsMenuActivity.cpp`; this is an ex
 
 ```cpp
 enum class AppId : uint8_t {
-  Sudoku = 2,
-  Gomoku = 3,
-  Minesweeper = 5,
-  UglyAvatar = 7,
+  RetiredSudoku = 2,  // removed app: reserved, never reuse
+  AirPage = 9,
   MyApp = 17,  // example: use the next unused bit ID in the current catalog
   Count = 18,
 };
 
 constexpr AppEntry kAppEntries[] = {
-    {AppId::Sudoku,      StrId::STR_SUDOKU_TITLE,      UIIcon::Sudoku,      &ActivityManager::goToSudoku},
-    {AppId::Gomoku,      StrId::STR_GOMOKU_TITLE,      UIIcon::Gomoku,      &ActivityManager::goToGomoku},
-    {AppId::Minesweeper, StrId::STR_MINESWEEPER_TITLE, UIIcon::Minesweeper, &ActivityManager::goToMinesweeper},
-    {AppId::UglyAvatar,  StrId::STR_UGLY_AVATAR,       UIIcon::Avatar,      &ActivityManager::goToUglyAvatar},
+    {AppId::AirPage,     StrId::STR_AIRPAGE_TITLE,     UIIcon::AirPage,     &ActivityManager::goToAirPage},
     {AppId::MyApp,       StrId::STR_MYAPP_TITLE,       UIIcon::MyApp,       &ActivityManager::goToMyApp},
 };
 ```
 
 The ID is the persisted bit position in `hiddenAppsMask`: allocate the next unused value, never reuse or change existing
-values, and keep conditional-app IDs outside their `#ifdef`. New bits default to visible. Fresh settings hide Chinese
-Chess, Minesweeper, 2048, Buddy, and Pixel Switch; existing masks are never overwritten. The menu, launcher, and App Visibility
+values, and keep conditional-app IDs outside their `#ifdef`. New bits default to visible. Removed apps keep their IDs as
+`Retired*` entries (2-7, 10-12, 15-16) so stored masks never shift; existing masks are never overwritten. The menu, launcher, and App Visibility
 settings all read this same table; no `switch` or `buildItems()` is needed.
-The visibility mask is 32-bit. `Calculator = 15` and `Woodfish = 16` are stable;
+The visibility mask is 32-bit. `RetiredCalculator = 15` and `RetiredWoodfish = 16` are stable;
 IDs 17 through 31 remain available.
 
 ### 4. Add the i18n key and icon
@@ -109,7 +97,7 @@ IDs 17 through 31 remain available.
 
 ### 5. (Optional) Stateless toy apps
 
-Some apps have no save state at all. Ugly Avatar is a single-screen generator that creates a new avatar on entry and exits cleanly. It skips both `GameSaveDebouncer` and any `*Store.{h,cpp}` layer, and its `Activity` is launched directly (no `*MenuActivity`). Use this pattern when the app has no "in-progress game" worth resuming; it cuts a few hundred lines and avoids persistent writes.
+Some apps have no save state at all: a single-screen tool that starts fresh on entry and exits cleanly. It skips both `GameSaveDebouncer` and any `*Store.{h,cpp}` layer, and its `Activity` is launched directly (no `*MenuActivity`). Use this pattern when the app has no "in-progress game" worth resuming; it cuts a few hundred lines and avoids persistent writes.
 
 ### Reusable implementation patterns
 
@@ -117,9 +105,7 @@ Choose the smallest pattern that fits:
 
 | App shape | Reference | Reuse |
 |---|---|---|
-| Stateless, single screen | `avatar/UglyAvatarActivity` | `Activity`, `GameUi` action geometry; no Store or menu Activity |
-| Stateful, single screen | `2048/Game2048Activity`, `woodfish/WoodfishActivity` | Board/state object plus `GameSaveDebouncer` or an app-specific idle checkpoint |
-| Board game with launcher | `sudoku/` | Separate Board, Store, MenuActivity, GameActivity; `OptionPopup` for in-game menus |
+| Stateless, single screen | `airpage/AirPageActivity` | `Activity`; no Store or menu Activity |
 
 Use `OptionPopup` for in-game action and difficulty menus. It owns touch hit
 testing, logical-button navigation, and the inherited-input barrier. Build its
@@ -130,7 +116,7 @@ AI, and persistence in the game: they are not framework concerns.
 
 ### 6. Regional visibility
 
-Chinese Chess and WeRead are compiled into the unified firmware. The existing
+WeRead is compiled into the unified firmware. The existing
 `ENABLE_CHINESE_VERSION` compatibility guards remain enabled by the base and
 simulator profiles; do not add a separate Chinese build or source-filter split.
 
@@ -158,13 +144,7 @@ Home  ──Confirm "Apps"──▶  AppsMenu  ──Confirm row──▶  <App>
   └──────Back──────────────────┘    ◀──Back──  <App>  (returns to AppsMenu, not Home)
 ```
 
-Every sub-app's Back button must call `activityManager.goToApps()`. This mirrors how Sudoku, Gomoku, Ugly Avatar, and AirPage behave.
-
-Electronic Woodfish accepts Confirm and all four logical directions on button
-release. Touch devices add taps on the rendered wooden body; whitespace,
-mallet, ripples, drags, and the system Back gesture are not knocks. Its
-`uint32_t` counter saturates, has no reset action, and is checkpointed to SD
-after 60 seconds idle or on exit.
+Every sub-app's Back button must call `activityManager.goToApps()`. This mirrors how AirPage behaves.
 
 ## AirPage
 
@@ -200,8 +180,8 @@ Apps share the reader's resource budget: about 380KB usable RAM on ESP32-C3, wit
 - **Heap**: allocate at `onEnter()`, free at `onExit()` (Activities are heap-allocated and `delete`d on exit). Don't hold buffers across navigation.
 - **Stack**: keep local function variables under 256 bytes; large buffers go on heap or `static`.
 - **Flash strings**: large constant tables must be `static constexpr` to stay in flash, not in DRAM.
-- **Storage writes**: never save on every user interaction. Debounce save-on-activity-exit, or use `GameSaveDebouncer` (1.5s window). Electronic Woodfish checkpoints its SD-backed counter only after 60 seconds idle or on exit.
-- **Single-buffer framebuffer**: 48KB framebuffer is shared. If an app needs to overlay (modal save UI etc.), use `renderer.storeBwBuffer()` / `restoreBwBuffer()` — see `UglyAvatarActivity::onSave()` for a worked example.
+- **Storage writes**: never save on every user interaction. Debounce save-on-activity-exit, or use `GameSaveDebouncer` (1.5s window).
+- **Single-buffer framebuffer**: 48KB framebuffer is shared. If an app needs to overlay (modal save UI etc.), use `renderer.storeBwBuffer()` / `restoreBwBuffer()`.
 
 See [AGENTS.md](../../../AGENTS.md) and the
 [resource protocol](../../../docs/engineering/hardware-constraints.md#the-resource-protocol);

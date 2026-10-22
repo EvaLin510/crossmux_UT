@@ -7,11 +7,24 @@
 
 class GfxRenderer;
 
+// Low-PPI panels (UT37: 3.7" 240x416, ~150 PPI) use built-in 1-bit bitmap UI
+// faces (see builtinFonts/all.h, CROSSMUX_BITMAP_UI_FONT). When the complete
+// bitmap family is on the SD card, it is chained behind them for the rare
+// characters the built-in common-character subset omits.
+#if FREEINK_DEVICE_UT37
+#define CROSSMUX_SD_UI_FONT 1
+#else
+#define CROSSMUX_SD_UI_FONT 0
+#endif
+
 /// Facade that owns the SD card font registry, manager, and resolver logic.
 /// Hides implementation details behind a single begin() + ensureLoaded() API.
 class SdCardFontSystem {
  public:
   static constexpr const char* COMPLETE_CHINESE_NOTO_SANS_FAMILY = "NotoSansSC";
+  // SD families tried, in order, as the bitmap UI face:
+  // /.fonts/<name>/ or /fonts/<name>/ holding <any>_{10,12,14}.cpfont.
+  static constexpr const char* SD_UI_FONT_FAMILIES[] = {"WQYZhengHei", "WenQuanDian"};
 
   SdCardFontSystem() = default;
   SdCardFontSystem(const SdCardFontSystem&) = delete;
@@ -61,6 +74,15 @@ class SdCardFontSystem {
   // fonts. CN builds already embed their UI glyphs and keep only the reader
   // size resident to preserve contiguous heap.
   void setupUiFallbacks(GfxRenderer& renderer);
+
+#if CROSSMUX_SD_UI_FONT
+  // Load the first installed SD_UI_FONT_FAMILIES entry once at boot and chain
+  // it behind the built-in UI faces. Owned by uiManager_ so reader reloads
+  // never unload it.
+  void setupSdUiFont(GfxRenderer& renderer);
+  SdCardFontManager uiManager_;
+  bool sdUiFontActive_ = false;
+#endif
 
   SdCardFontRegistry registry_;
   SdCardFontManager manager_;

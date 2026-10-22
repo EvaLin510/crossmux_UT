@@ -23,19 +23,6 @@ constexpr int MAX_MONTH = 12;
 constexpr int MIN_YEAR = 2024;
 constexpr int MAX_YEAR = 2099;
 
-bool isLeapYear(const int year) { return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0); }
-
-unsigned getDaysInMonth(const int year, const unsigned month) {
-  static constexpr unsigned DAYS_PER_MONTH[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  if (month == 2) {
-    return isLeapYear(year) ? 29U : 28U;
-  }
-  if (month < 1 || month > 12) {
-    return 31;
-  }
-  return DAYS_PER_MONTH[month - 1];
-}
-
 std::string formatTwoDigits(const unsigned value) {
   char buffer[4];
   snprintf(buffer, sizeof(buffer), "%02u", value);
@@ -70,7 +57,7 @@ void ReadingDateSelectionActivity::onEnter() {
         year = std::clamp(localTime.tm_year + 1900, MIN_YEAR, MAX_YEAR);
         month = static_cast<unsigned>(std::clamp(localTime.tm_mon + 1, MIN_MONTH, MAX_MONTH));
         day = static_cast<unsigned>(
-            std::clamp(localTime.tm_mday, MIN_DAY, static_cast<int>(getDaysInMonth(year, month))));
+            std::clamp(localTime.tm_mday, MIN_DAY, static_cast<int>(TimeUtils::getDaysInMonth(year, month))));
       }
     }
   }
@@ -81,13 +68,13 @@ void ReadingDateSelectionActivity::onEnter() {
 
 void ReadingDateSelectionActivity::adjustSelectedField(const int delta) {
   if (selectedField == 0) {
-    day = wrapValue(day, delta, MIN_DAY, getDaysInMonth(year, month));
+    day = wrapValue(day, delta, MIN_DAY, TimeUtils::getDaysInMonth(year, month));
   } else if (selectedField == 1) {
     month = wrapValue(month, delta, MIN_MONTH, MAX_MONTH);
-    day = std::min(day, getDaysInMonth(year, month));
+    day = std::min(day, TimeUtils::getDaysInMonth(year, month));
   } else {
     year = std::clamp(year + delta, MIN_YEAR, MAX_YEAR);
-    day = std::min(day, getDaysInMonth(year, month));
+    day = std::min(day, TimeUtils::getDaysInMonth(year, month));
   }
   requestUpdate();
 }

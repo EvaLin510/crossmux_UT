@@ -50,6 +50,23 @@ class HalPowerManager {
   // Enter one light-sleep cycle. GPIO and timer wake sources are removed before returning.
   LightSleepWakeReason lightSleepFor(uint32_t seconds) const;
 
+  // UT37 reading-idle light sleep: sleeps the whole SoC (~0.25 mA instead of
+  // ~15-20 mA at 80 MHz) until a touch (INT low), the side key (HIGH) or
+  // maxMs elapses. Refuses (IdleWake::None) while anything holds a power
+  // Lock (a render is in flight), WiFi is up, the frontlight is lit (LEDC
+  // stops in light sleep) or a USB host is attached (the USB-Serial/JTAG link
+  // would drop). No-op on other boards.
+  // Returns what ended the sleep: None (refused / failed), Timer or Input.
+  enum class IdleWake : uint8_t { None, Timer, Input };
+  IdleWake idleLightSleep(uint32_t maxMs);
+
+  // UT37 "Clock" sleep screen: one light-sleep cycle with GPIO42 held LOW, so
+  // the SD card is unpowered and the FT6336U is held in reset (no touch, no
+  // touch wake). Ends on the side key (PowerButton) or after `seconds` (Timer).
+  // Call only after Storage.prepareForDeepSleep(): the SD card loses power.
+  // Returns Failed on other boards.
+  LightSleepWakeReason clockLightSleep(uint32_t seconds) const;
+
   // Get battery percentage (range 0-100)
   uint16_t getBatteryPercentage() const;
 

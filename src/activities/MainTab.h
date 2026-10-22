@@ -9,8 +9,8 @@ enum class MainTabFocus : uint8_t { Tabs, Content };
 enum class MainTabContentEdge : uint8_t { First, Last };
 
 namespace MainTabs {
-inline constexpr std::array<MainTab, 5> values = {MainTab::Recent, MainTab::Library, MainTab::Apps, MainTab::Settings,
-                                                  MainTab::Statistics};
+inline constexpr std::array<MainTab, 5> values = {MainTab::Recent, MainTab::Library, MainTab::Apps, MainTab::Statistics,
+                                                  MainTab::Settings};
 
 constexpr int indexOf(const MainTab tab) {
   for (size_t i = 0; i < values.size(); ++i) {

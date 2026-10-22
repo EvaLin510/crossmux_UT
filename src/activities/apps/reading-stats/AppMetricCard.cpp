@@ -1,10 +1,16 @@
 #include "AppMetricCard.h"
 
+#include <I18n.h>
+
 #include <algorithm>
+#include <string>
 #include <vector>
 
+#include "InxItemLayout.h"
+#include "ReadingStatsStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/ReadingStatsAnalytics.h"
 
 namespace {
 void drawDottedLine(const GfxRenderer& renderer, const int x, const int y, const int width) {
@@ -85,10 +91,11 @@ void draw(const GfxRenderer& renderer, const Rect& rect, const char* label, cons
 bool drawSelectablePanel(const GfxRenderer& renderer, const Rect& rect, const bool selected, const bool darkSelected,
                          const bool ditherUnselected) {
   if (UITheme::getInstance().hasMainTabs()) {
-    if (selected) {
+    if (selected && InxSelection::inverts) {
       renderer.fillRect(rect.x, rect.y, rect.width, rect.height, true);
       return false;
     }
+    if (selected) renderer.fillRectDither(rect.x, rect.y, rect.width, rect.height, Color::LightGray);
     drawDottedCard(renderer, rect);
     return true;
   }
@@ -107,9 +114,13 @@ bool drawSelectablePanel(const GfxRenderer& renderer, const Rect& rect, const bo
 
 bool drawListRow(const GfxRenderer& renderer, const Rect& rect, const bool selected) {
   if (UITheme::getInstance().hasMainTabs()) {
-    if (selected) renderer.fillRect(rect.x, rect.y, rect.width, rect.height, true);
+    if (selected && InxSelection::inverts) {
+      renderer.fillRect(rect.x, rect.y, rect.width, rect.height, true);
+    } else if (selected) {
+      renderer.fillRectDither(rect.x, rect.y, rect.width, rect.height, Color::LightGray);
+    }
     drawDottedLine(renderer, rect.x, rect.y + rect.height - 1, rect.width);
-    return !selected;
+    return !(selected && InxSelection::inverts);
   }
   if (selected) {
     renderer.fillRectDither(rect.x, rect.y, rect.width, rect.height, Color::LightGray);
@@ -131,5 +142,26 @@ void drawListScrollBar(const GfxRenderer& renderer, const Rect& rect, const int 
 }
 
 UIIcon menuIcon(const UIIcon icon) { return UITheme::getInstance().hasMainTabs() ? icon : UIIcon::None; }
+
+void drawSummaryGrid(const GfxRenderer& renderer, const int left, const int top, const int cardWidth,
+                     const int cardHeight, const int gap) {
+  const uint64_t todayReadingMs = READING_STATS.getTodayReadingMs();
+  Options todayOptions;
+  todayOptions.showCheck = todayReadingMs >= getDailyReadingGoalMs();
+  const int right = left + cardWidth + gap;
+  auto rowY = [&](const int row) { return top + (cardHeight + gap) * row; };
+  draw(renderer, Rect{left, rowY(0), cardWidth, cardHeight}, tr(STR_STREAK),
+       std::to_string(READING_STATS.getCurrentStreakDays()));
+  draw(renderer, Rect{right, rowY(0), cardWidth, cardHeight}, tr(STR_MAX_STREAK),
+       std::to_string(READING_STATS.getMaxStreakDays()));
+  draw(renderer, Rect{left, rowY(1), cardWidth, cardHeight}, tr(STR_TODAY_READING),
+       ReadingStatsAnalytics::formatDurationHm(todayReadingMs), todayOptions);
+  draw(renderer, Rect{right, rowY(1), cardWidth, cardHeight}, tr(STR_READING_TIME),
+       ReadingStatsAnalytics::formatDurationHm(READING_STATS.getTotalReadingMs()));
+  draw(renderer, Rect{left, rowY(2), cardWidth, cardHeight}, tr(STR_BOOKS_FINISHED),
+       std::to_string(READING_STATS.getBooksFinishedCount()));
+  draw(renderer, Rect{right, rowY(2), cardWidth, cardHeight}, tr(STR_BOOKS_STARTED),
+       std::to_string(READING_STATS.getBooksStartedCount()));
+}
 
 }  // namespace AppMetricCard

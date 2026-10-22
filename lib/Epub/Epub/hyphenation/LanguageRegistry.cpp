@@ -4,8 +4,10 @@
 #include <array>
 
 #include "HyphenationCommon.h"
+// UT37 (single device, English / Chinese UI) keeps only English hyphenation;
+// the other tries cost ~300 KB of flash (German alone ~200 KB).
+#if !FREEINK_DEVICE_UT37
 #include "generated/hyph-de.trie.h"
-#include "generated/hyph-en.trie.h"
 #include "generated/hyph-es.trie.h"
 #include "generated/hyph-fi.trie.h"
 #include "generated/hyph-fr.trie.h"
@@ -14,11 +16,21 @@
 #include "generated/hyph-ru.trie.h"
 #include "generated/hyph-sv.trie.h"
 #include "generated/hyph-uk.trie.h"
+#endif
+#include "generated/hyph-en.trie.h"
 
 namespace {
 
 // English hyphenation patterns (3/3 minimum prefix/suffix length)
 LanguageHyphenator englishHyphenator(en_patterns, isLatinLetter, toLowerLatin, 3, 3);
+#if FREEINK_DEVICE_UT37
+using EntryArray = std::array<LanguageEntry, 1>;
+
+const EntryArray& entries() {
+  static const EntryArray kEntries = {{{"english", "en", &englishHyphenator}}};
+  return kEntries;
+}
+#else
 LanguageHyphenator frenchHyphenator(fr_patterns, isLatinLetter, toLowerLatin);
 LanguageHyphenator germanHyphenator(de_patterns, isLatinLetter, toLowerLatin);
 LanguageHyphenator russianHyphenator(ru_patterns, isCyrillicLetter, toLowerCyrillic);
@@ -44,6 +56,7 @@ const EntryArray& entries() {
                                        {"finnish", "fi", &finnishHyphenator}}};
   return kEntries;
 }
+#endif
 
 }  // namespace
 

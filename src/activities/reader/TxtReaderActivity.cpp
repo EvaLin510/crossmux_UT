@@ -1,6 +1,8 @@
 #include "TxtReaderActivity.h"
 
 #include <BidiUtils.h>
+#include <Epub/Page.h>
+#include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -16,19 +18,28 @@
 #include <cstring>
 #include <limits>
 
-#include "AchievementsStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "DictionaryWordSelectActivity.h"
+#include "EpubReaderBookmarksActivity.h"
+#include "EpubReaderMenuActivity.h"
+#include "KOReaderCredentialStore.h"
+#include "KOReaderSyncActivity.h"
+#include "EpubReaderPercentSelectionActivity.h"
 #include "MappedInputManager.h"
 #include "ProgressFile.h"
 #include "ReaderUtils.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
+#include "SdCardFontSystem.h"
 #include "TxtReaderChapterSelectionActivity.h"
+#include "activities/ActivityManager.h"
+#include "activities/settings/TextSettingsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "util/AchievementPopupUtils.h"
-#include "util/ReadingBackground.h"
+#include "util/AutoPageTurn.h"
+#include "util/BookmarkFile.h"
+#include "util/BookmarkUtil.h"
 #include "util/ReadingGuideLine.h"
 
 namespace {
@@ -81,6 +92,8 @@ bool TxtReaderActivity::loadBook() {
     return false;
   }
 
+  BookmarkFile::load(bookPath, cachedBookmarks);
+
   const auto fileName = bookPath.substr(bookPath.rfind('/') + 1);
   READING_STATS.beginSession(bookPath, fileName, "", "", 0, "", 0);
   return true;
@@ -89,16 +102,18 @@ bool TxtReaderActivity::loadBook() {
 void TxtReaderActivity::onExit() {
   ReaderActivity::onExit();
 
+  auto_page_turn::setActive(false);  // auto turn ends with the book
+  stopAutoPageTurn();
   if (indexCacheDirty) {
     savePageIndexCache();
   }
   pageOffsets.clear();
   directPageCount = 0;
   currentPageLines.clear();
+  cachedBookmarks.clear();
+  cachedBookmarks.shrink_to_fit();
   pageBuffer.reset();
   READING_STATS.endSession();
-  ACHIEVEMENTS.recordSessionEnded(READING_STATS.getLastSessionSnapshot());
-  showPendingAchievementPopups(renderer);
   txt.reset();
 
 #if FREEINK_DEVICE_EEGO_A4
@@ -109,13 +124,479 @@ void TxtReaderActivity::onExit() {
 
 bool TxtReaderActivity::handleFormatInput() {
   READING_STATS.tickActiveSession();
+  const unsigned long now = millis();
+  if (showBookmarkMessage && now - bookmarkMessageTime >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showBookmarkMessage = false;
+    requestUpdate();
+  }
+  if (showDictionaryMessage && now - dictionaryMessageTime >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showDictionaryMessage = false;
+    requestUpdate();
+  }
+
+  // Touch long-press runs the action set for its 3x3 zone. The SDK fires it
+  // once while the finger is still down and swallows that contact's release,
+  // so the same hold never also turns the page or opens the menu.
+  int pressX = 0;
+  int pressY = 0;
+  if (mappedInput.wasScreenLongPress(pressX, pressY)) {
+    READING_STATS.noteActivity();
+    runTouchLongPress(SETTINGS.touchLongPress[ReaderUtils::touchLongPressZone(renderer, pressX, pressY)]);
+    return true;
+  }
+
+  if (handleAutoPageTurn()) return true;
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
       ReaderUtils::isTouchMenuGesture(renderer, mappedInput)) {
     READING_STATS.noteActivity();
-    openChapterSelection();
+    openReaderMenu();
     return true;
   }
+  return false;
+}
+
+void TxtReaderActivity::openReaderMenu() {
+  if (!txt) return;
+  openedFromShortcut = false;
+  startActivityForResultWith<EpubReaderMenuActivity>(
+      [this](const ActivityResult& result) {
+        READING_STATS.resumeSession();
+        const auto* menu = std::get_if<MenuResult>(&result.data);
+        if (!menu) return;
+        // The menu rotates the renderer live; the reader reflows here.
+        if (SETTINGS.orientation != menu->orientation) applyReaderOrientation(menu->orientation);
+#if FREEINK_DEVICE_EEGO_A4
+        // EEGO's single-pass grayscale page must clear the menu first.
+        pagesUntilFullRefresh = 1;
+#endif
+        if (!result.isCancelled) onReaderMenuConfirm(menu->action);
+      },
+      txt->getTitle(), 0, 0, getProgressPercent(), SETTINGS.orientation, 0, false, !cachedBookmarks.empty(), true);
+}
+
+void TxtReaderActivity::onReaderMenuConfirm(const int action) {
+  using MenuAction = EpubReaderMenuActivity::MenuAction;
+  switch (static_cast<MenuAction>(action)) {
+    case MenuAction::SELECT_CHAPTER:
+      openChapterSelection();
+      break;
+    case MenuAction::TEXT_SETTINGS:
+      startActivityForResultWith<TextSettingsActivity>(
+          [this](const ActivityResult&) {
+            READING_STATS.resumeSession();
+            {
+              RenderLock lock(*this);
+              // The reader only loads SD fonts on book open; reload for a new family/size.
+              sdFontSystem.ensureLoaded(renderer);
+            }
+            resetLayout();
+            requestUpdate();
+          },
+          &sdFontSystem.registry(), TextSettingsActivity::Tab::Family);
+      break;
+    case MenuAction::GO_TO_PERCENT:
+      startActivityForResultWith<EpubReaderPercentSelectionActivity>(
+          [this](const ActivityResult& result) {
+            READING_STATS.resumeSession();
+            if (result.isCancelled) {
+              reopenMenuAfterCancel();
+              return;
+            }
+            jumpToPercent(std::get<PercentResult>(result.data).percent);
+            requestUpdate();
+          },
+          getProgressPercent());
+      break;
+    case MenuAction::GO_HOME:
+      onGoHome();
+      return;
+    case MenuAction::DELETE_CACHE: {
+      {
+        RenderLock lock(*this);
+        txt->clearCache();
+        txt->setupCacheDir();
+        // progress.bin lives in the wiped cache dir; rewrite it so the book
+        // reopens here, and keep onExit() from re-saving the old page index.
+        indexCacheDirty = false;
+        saveProgress();
+      }
+      onGoHome();
+      return;
+    }
+    case MenuAction::BOOKMARKS:
+      openBookmarks();
+      break;
+    case MenuAction::TOGGLE_BOOKMARK:
+      toggleBookmark();
+      break;
+    case MenuAction::DICTIONARY:
+      openDictionaryWordSelect();
+      break;
+    case MenuAction::SYNC:
+      launchKOReaderSync();
+      return;
+    default:
+      // Night mode, frontlight and orientation are applied inside the menu;
+      // footnotes and the auto-turn row are never offered by buildTxtMenuItems().
+      break;
+  }
+}
+
+void TxtReaderActivity::reopenMenuAfterCancel() {
+  if (openedFromShortcut) {
+    openedFromShortcut = false;
+    requestUpdate();
+    return;
+  }
+  openReaderMenu();
+}
+
+void TxtReaderActivity::runTouchLongPress(const uint8_t action) {
+  using MenuAction = EpubReaderMenuActivity::MenuAction;
+  switch (action) {
+    case CrossPointSettings::TLP_READER_MENU:
+      openReaderMenu();
+      break;
+    case CrossPointSettings::TLP_TOC:
+      openChapterSelection();
+      break;
+    case CrossPointSettings::TLP_BOOKMARK_LIST:
+      openedFromShortcut = true;
+      openBookmarks();
+      break;
+    case CrossPointSettings::TLP_TOGGLE_BOOKMARK:
+      toggleBookmark();
+      break;
+    case CrossPointSettings::TLP_TEXT_SETTINGS:
+      onReaderMenuConfirm(static_cast<int>(MenuAction::TEXT_SETTINGS));
+      break;
+    case CrossPointSettings::TLP_DICTIONARY:
+      openDictionaryWordSelect();
+      break;
+    case CrossPointSettings::TLP_AUTO_TURN:
+      // handleAutoPageTurn() picks the change up on the next loop.
+      auto_page_turn::setActive(!auto_page_turn::isActive());
+      requestUpdate();
+      break;
+    case CrossPointSettings::TLP_GO_TO_PERCENT:
+      openedFromShortcut = true;
+      onReaderMenuConfirm(static_cast<int>(MenuAction::GO_TO_PERCENT));
+      break;
+    case CrossPointSettings::TLP_GO_HOME:
+      onGoHome();
+      break;
+    case CrossPointSettings::TLP_SYNC:
+      launchKOReaderSync();
+      break;
+    case CrossPointSettings::TLP_FOOTNOTES:  // TXT has no footnotes
+    case CrossPointSettings::TLP_NONE:
+    default:
+      break;
+  }
+}
+
+void TxtReaderActivity::updateBookmarkFlag() {
+  if (pageOffsets.empty()) {
+    currentPageBookmarked = false;
+    return;
+  }
+  const size_t start = getCurrentSourceOffset();
+  const size_t end = std::max(currentPageEndOffset, start + 1);
+  currentPageBookmarked = std::any_of(cachedBookmarks.begin(), cachedBookmarks.end(), [&](const BookmarkEntry& b) {
+    return b.hasVisibleTextOffset && b.visibleTextOffset >= start && b.visibleTextOffset < end;
+  });
+}
+
+void TxtReaderActivity::toggleBookmark() {
+  if (!txt || !initialized || pageOffsets.empty()) return;
+  {
+    RenderLock lock(*this);
+    const size_t start = getCurrentSourceOffset();
+    const size_t end = std::max(currentPageEndOffset, start + 1);
+    const size_t countBefore = cachedBookmarks.size();
+    cachedBookmarks.erase(std::remove_if(cachedBookmarks.begin(), cachedBookmarks.end(),
+                                         [&](const BookmarkEntry& b) {
+                                           return b.hasVisibleTextOffset && b.visibleTextOffset >= start &&
+                                                  b.visibleTextOffset < end;
+                                         }),
+                          cachedBookmarks.end());
+    bookmarkRemoved = cachedBookmarks.size() != countBefore;
+    if (!bookmarkRemoved) {
+      std::string pageText;
+      for (const auto& line : currentPageLines) {
+        if (pageText.size() >= 256) break;  // the summary keeps only the first words
+        pageText += line.text;
+        pageText += ' ';
+      }
+      BookmarkEntry entry;
+      const size_t fileSize = txt->getFileSize();
+      entry.percentage = fileSize > 0 ? static_cast<float>(static_cast<double>(start) / fileSize) : 0.0f;
+      entry.summary = BookmarkUtil::sanitizeBookmarkSummary(std::move(pageText));
+      entry.hasVisibleTextOffset = true;
+      entry.visibleTextOffset = static_cast<uint32_t>(start);
+      cachedBookmarks.insert(cachedBookmarks.begin(), std::move(entry));
+    }
+    currentPageBookmarked = !bookmarkRemoved;
+  }
+  if (!BookmarkFile::save(bookPath, cachedBookmarks)) {
+    LOG_ERR("TRS", "Failed to save bookmarks");
+  }
+  showBookmarkMessage = true;
+  bookmarkMessageTime = millis();
+  requestUpdate();
+}
+
+void TxtReaderActivity::openBookmarks() {
+  if (!txt) return;
+  startActivityForResultWith<EpubReaderBookmarksActivity>(
+      [this](const ActivityResult& result) {
+        READING_STATS.resumeSession();
+        // The list may have deleted entries.
+        BookmarkFile::load(bookPath, cachedBookmarks);
+        if (result.isCancelled) {
+          {
+            RenderLock lock(*this);
+            updateBookmarkFlag();
+          }
+          reopenMenuAfterCancel();
+          return;
+        }
+        openedFromShortcut = false;
+        const auto* target = std::get_if<ProgressChangeResult>(&result.data);
+        {
+          RenderLock lock(*this);
+          if (target && target->hasVisibleTextOffset) {
+            const int returnPage = pageMode == PageMode::Indexed ? currentPage : directReturnPage;
+            endOfBook = false;
+            goToSourceOffset(target->visibleTextOffset, returnPage);
+          }
+        }
+        requestUpdate();
+      },
+      *txt);
+}
+
+void TxtReaderActivity::openDictionaryWordSelect() {
+  if (SETTINGS.dictionaryName[0] == '\0') {
+    showDictionaryMessage = true;
+    dictionaryMessageTime = millis();
+    requestUpdate();
+    return;
+  }
+  if (!initialized || currentPageLines.empty()) return;
+
+  // The word-select screen works on an EPUB-style Page, so the visible TXT
+  // lines are re-expressed as one PageLine each: a wide (3+ byte UTF-8, e.g.
+  // CJK) codepoint is its own word, other text splits at spaces. Lines start
+  // at lineStartX(), the origin drawTextLines() uses. The Page lives only
+  // while the word-select screen is open (it owns it), as on the EPUB path.
+  auto page = makeUniqueNoThrow<Page>();
+  if (!page) {
+    LOG_ERR("TRS", "OOM: dictionary page");
+    return;
+  }
+  {
+    RenderLock lock(*this);
+    std::string pageText;
+    for (const auto& line : currentPageLines) pageText += line.text;
+    // Load the page's glyph advances once rather than per measured token.
+    renderer.ensureSdCardFontReady(cachedFontId, pageText.c_str(), 0x01);
+
+    const int lineHeight = renderer.getLineHeight(cachedFontId);
+    std::vector<std::string> words;
+    std::vector<int16_t> wordX;
+    std::vector<EpdFontFamily::Style> styles;
+    words.reserve(48);
+    wordX.reserve(48);
+    styles.reserve(48);
+    std::string token;
+    int y = cachedOrientedMarginTop;
+    for (const auto& line : currentPageLines) {
+      const std::string& text = line.text;
+      words.clear();
+      wordX.clear();
+      styles.clear();
+      int advance = 0;
+      size_t i = 0;
+      while (i < text.size()) {
+        const auto lead = static_cast<uint8_t>(text[i]);
+        const bool space = lead == ' ' || lead == '\t';
+        size_t end = i + 1;
+        if (lead >= 0xE0) {
+          end = std::min(text.size(), i + (lead >= 0xF0 ? 4 : 3));  // one wide codepoint
+        } else if (!space) {
+          while (end < text.size()) {
+            const auto c = static_cast<uint8_t>(text[end]);
+            if (c == ' ' || c == '\t' || c >= 0xE0) break;
+            end++;
+          }
+        }
+        token.assign(text, i, end - i);
+        const int width = renderer.getTextAdvanceX(cachedFontId, token.c_str(), EpdFontFamily::REGULAR);
+        if (!space) {
+          words.push_back(token);
+          wordX.push_back(static_cast<int16_t>(advance));
+          styles.push_back(EpdFontFamily::REGULAR);
+        }
+        advance += width;
+        i = end;
+      }
+      if (!words.empty()) {
+        auto block =
+            makeUniqueNoThrow<TextBlock>(words, wordX, styles, std::vector<uint8_t>{}, std::vector<uint16_t>{});
+        if (block && block->valid()) {
+          auto pageLine = makeUniqueNoThrow<PageLine>(std::move(block), static_cast<int16_t>(lineStartX(line)),
+                                                      static_cast<int16_t>(y));
+          if (pageLine) page->elements.push_back(std::move(pageLine));
+        }
+      }
+      y += lineHeight;
+    }
+  }
+
+  startActivityForResultWith<DictionaryWordSelectActivity>(
+      [this](const ActivityResult&) {
+        READING_STATS.resumeSession();
+        requestUpdate();
+      },
+      std::move(page), 0, 0);
+}
+
+bool TxtReaderActivity::launchKOReaderSync() {
+  if (!txt || !initialized || pageOffsets.empty() || !KOREADER_STORE.hasCredentials()) return false;
+  // Sync by percentage of the file at the page start, the offset saveProgress() stores.
+  const size_t fileSize = txt->getFileSize();
+  const size_t start = getCurrentSourceOffset();
+  SavedProgressPosition localPos;
+  localPos.percentage = fileSize > 0 ? static_cast<float>(static_cast<double>(start) / fileSize) : 0.0f;
+  saveProgress();
+  if (indexCacheDirty) savePageIndexCache();
+  const std::string path = bookPath;
+  return activityManager.replaceActivityWith<KOReaderSyncActivity>(path, 0, getDisplayPageNumber() - 1, totalPages,
+                                                                   std::move(localPos), std::string());
+}
+
+void TxtReaderActivity::resetLayout() {
+  RenderLock lock(*this);
+  if (!initialized || !txt) return;
+  // initializeReader() restores this byte offset through loadProgress().
+  saveProgress();
+  if (indexCacheDirty) savePageIndexCache();
+  pageOffsets.clear();
+  currentPageLines.clear();
+  pageMode = PageMode::Indexed;
+  currentPage = 0;
+  directPageIndex = 0;
+  directPageCount = 0;
+  endOfBook = false;
+  initialized = false;
+}
+
+void TxtReaderActivity::applyReaderOrientation(const uint8_t orientation) {
+  if (SETTINGS.orientation != orientation) {
+    SETTINGS.orientation = orientation;
+    SETTINGS.saveToFile();
+  }
+  {
+    RenderLock lock(*this);
+    ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+  }
+  resetLayout();
+}
+
+void TxtReaderActivity::jumpToPercent(const int percent) {
+  RenderLock lock(*this);
+  if (!txt || !pageBuffer || pageOffsets.empty()) return;
+  const size_t fileSize = txt->getFileSize();
+  if (fileSize == 0) return;
+  const size_t target = std::min(
+      static_cast<size_t>(static_cast<uint64_t>(fileSize) * static_cast<uint64_t>(std::clamp(percent, 0, 100)) / 100),
+      fileSize - 1);
+  const int returnPage = pageMode == PageMode::Indexed ? currentPage : directReturnPage;
+  endOfBook = false;
+  if (indexComplete || target <= pageOffsets.back()) {
+    // Inside the paginated range: snaps to the page holding the target.
+    goToSourceOffset(target, returnPage);
+    return;
+  }
+  // Past the paginated range: start at the next line so the page never begins
+  // mid-character ('\n' never occurs inside a UTF-8 or GBK multi-byte sequence).
+  size_t start = pageOffsets.back();
+  const size_t len = std::min(CHUNK_SIZE, fileSize - target);
+  if (txt->readContent(pageBuffer.get(), target, len)) {
+    const auto* newline = static_cast<const uint8_t*>(memchr(pageBuffer.get(), '\n', len));
+    if (newline != nullptr) {
+      const size_t lineStart = target + static_cast<size_t>(newline - pageBuffer.get()) + 1;
+      if (lineStart < fileSize) start = lineStart;
+    }
+  }
+  goToSourceOffset(start, returnPage);
+}
+
+void TxtReaderActivity::stopAutoPageTurn() {
+  autoTurnActive = false;
+  rollStep = 0;
+  nextPageLines.clear();
+  nextPageLines.shrink_to_fit();
+}
+
+bool TxtReaderActivity::handleAutoPageTurn() {
+  const bool wanted = auto_page_turn::isActive();
+  if (wanted != autoTurnActive || (wanted && SETTINGS.autoPageTurnRate != autoTurnRate)) {
+    if (wanted) {
+      autoTurnActive = true;
+      autoTurnRate = std::clamp<uint8_t>(SETTINGS.autoPageTurnRate, 1, auto_page_turn::kMaxRate);
+      autoTurnStart = millis();
+    } else {
+      stopAutoPageTurn();
+    }
+    requestUpdate();
+  }
+  if (!autoTurnActive) return false;
+
+  // Confirm or the menu tap stops it, as in the EPUB reader.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
+      ReaderUtils::isTouchMenuGesture(renderer, mappedInput) ||
+      ReaderUtils::wasAutoScrollLabelTapped(renderer, mappedInput)) {
+    auto_page_turn::setActive(false);
+    stopAutoPageTurn();
+    requestUpdate();
+    return true;
+  }
+  if (endOfBook) {
+    // Nothing left to turn to: stop, so the device may sleep again.
+    auto_page_turn::setActive(false);
+    stopAutoPageTurn();
+    return false;
+  }
+  if (RenderLock::peek()) return false;
+
+  if (autoTurnStart != rollEpoch) {
+    rollEpoch = autoTurnStart;
+    rollStep = 0;
+    rollLineCount = 0;
+    rollSupported = true;
+  }
+  const unsigned long duration = 60UL * 1000UL / autoTurnRate;
+  const unsigned long elapsed = millis() - autoTurnStart;
+  if (elapsed >= duration) {
+    pageTurn(true);  // restarts autoTurnStart
+    requestUpdate();
+    return false;
+  }
+#if FREEINK_DEVICE_UT37
+  if (rollSupported) {
+    // Line k of the next page appears at k/n of the interval.
+    const unsigned long lines =
+        rollLineCount > 0 ? rollLineCount : static_cast<unsigned long>(std::max(1, linesPerPage));
+    const auto want = static_cast<uint8_t>(elapsed * lines / duration);
+    if (want > rollStep) {
+      rollStep = want;
+      requestUpdate();
+    }
+  }
+#endif
   return false;
 }
 
@@ -124,6 +605,9 @@ bool TxtReaderActivity::pageTurn(const bool isForward) {
   READING_STATS.noteActivity();
   RenderLock lock(*this);
   endOfBook = false;
+  // Any turn, manual or automatic, starts a fresh auto-turn interval.
+  autoTurnStart = millis();
+  rollStep = 0;
   if (pageMode == PageMode::Indexed) {
     if (!isForward && currentPage > 0) {
       currentPage--;
@@ -140,10 +624,13 @@ bool TxtReaderActivity::pageTurn(const bool isForward) {
   if (!isForward) {
     if (directPageIndex > 0) {
       directPageIndex--;
-    } else {
-      pageMode = PageMode::Indexed;
-      currentPage = directReturnPage;
+      return true;
     }
+    const size_t start = directPageOffsets[0];
+    if (!indexDirectPosition()) return false;
+    // The indexed page holding `start` begins at or before it: that page is
+    // already a step back unless it begins exactly at `start`.
+    if (currentPage > 0 && pageOffsets[currentPage] == start) currentPage--;
     return true;
   }
   if (directPageIndex + 1 < directPageCount) {
@@ -168,10 +655,7 @@ bool TxtReaderActivity::skipPages(const int amount) {
   if (!initialized || pageOffsets.empty() || amount == 0) return false;
   RenderLock lock(*this);
   endOfBook = false;
-  if (pageMode == PageMode::Direct) {
-    pageMode = PageMode::Indexed;
-    currentPage = directReturnPage;
-  }
+  if (pageMode == PageMode::Direct && !indexDirectPosition()) return false;
   if (amount < 0) {
     const int target = std::max(0, currentPage + amount);
     if (target == currentPage) return false;
@@ -252,7 +736,8 @@ void TxtReaderActivity::initializeReader() {
   // Calculate viewport dimensions
   renderer.getOrientedViewableTRBL(&cachedOrientedMarginTop, &cachedOrientedMarginRight, &cachedOrientedMarginBottom,
                                    &cachedOrientedMarginLeft);
-  cachedOrientedMarginTop += cachedScreenMargin;
+  // UT37 reserves a top strip for the clock and battery (0 elsewhere).
+  cachedOrientedMarginTop += std::max<int>(cachedScreenMargin, UITheme::getStatusBarTopHeight(cachedOrientedMarginTop));
   cachedOrientedMarginLeft += cachedScreenMargin;
   cachedOrientedMarginRight += cachedScreenMargin;
   cachedOrientedMarginBottom +=
@@ -555,6 +1040,23 @@ bool TxtReaderActivity::extendIndexToPage(const size_t targetPage) {
   return targetPage < pageOffsets.size();
 }
 
+bool TxtReaderActivity::indexDirectPosition() {
+  if (pageMode != PageMode::Direct || directPageCount == 0) return false;
+  const size_t offset = directPageOffsets[directPageIndex];
+  // directReturnPage is only where Direct mode was entered from; after a
+  // rebuilt index (font or layout change) it is page 0, so falling back to it
+  // would throw a restored position back to the start of the book.
+  while (!indexComplete && pageOffsets.back() < offset) {
+    const size_t from = pageOffsets.back();
+    size_t next = from;
+    if (!loadPageAtOffset(from, currentPageLines, next) || !advancePageIndex(next)) return false;
+  }
+  pageMode = PageMode::Indexed;
+  currentPage = static_cast<int>(txt_page_index::pageForOffset(pageOffsets, offset));
+  directPageCount = 0;
+  return true;
+}
+
 void TxtReaderActivity::goToSourceOffset(const size_t sourceOffset, const int returnPage) {
   if (pageOffsets.empty() || sourceOffset >= txt->getFileSize()) return;
 
@@ -662,11 +1164,23 @@ void TxtReaderActivity::renderBook() {
     return;
   }
   currentPageEndOffset = nextOffset;
+  updateBookmarkFlag();
 
   if (pageMode == PageMode::Indexed) advancePageIndex(nextOffset);
 
+#if FREEINK_DEVICE_UT37
+  // Rolling frames skip saveProgress(): the position only changes at the turn.
+  if (autoTurnActive && rollStep > 0 && rollEpoch == autoTurnStart && renderRollingFrame()) return;
+#endif
+
   renderer.clearScreen();
   renderPage();
+  if (showBookmarkMessage) {
+    GUI.drawPopup(renderer, bookmarkRemoved ? tr(STR_BOOKMARK_REMOVED) : tr(STR_BOOKMARK_ADDED));
+  }
+  if (showDictionaryMessage) {
+    GUI.drawPopup(renderer, tr(STR_DICT_NO_DICT_SET));
+  }
   if (!firstPageLogged) {
     firstPageLogged = true;
     LOG_DBG("TRS", "First page displayed: open_total=%lums", millis() - openStartMs);
@@ -676,59 +1190,85 @@ void TxtReaderActivity::renderBook() {
   saveProgress();
 }
 
-void TxtReaderActivity::renderPage() {
-  const auto t0 = millis();
+int TxtReaderActivity::lineStartX(const TxtLine& line) const {
+  const bool lineIsRtl = BidiUtils::startsWithRtl(line.text.c_str(), BidiUtils::RTL_PARAGRAPH_PROBE_DEPTH);
+  uint8_t effectiveAlignment = cachedParagraphAlignment;
+  if (lineIsRtl &&
+      (effectiveAlignment == CrossPointSettings::LEFT_ALIGN || effectiveAlignment == CrossPointSettings::JUSTIFIED)) {
+    effectiveAlignment = CrossPointSettings::RIGHT_ALIGN;
+  }
+  switch (effectiveAlignment) {
+    case CrossPointSettings::CENTER_ALIGN:
+      return cachedOrientedMarginLeft +
+             (viewportWidth - renderer.getTextAdvanceX(cachedFontId, line.text.c_str(), EpdFontFamily::REGULAR)) / 2;
+    case CrossPointSettings::RIGHT_ALIGN:
+      return cachedOrientedMarginLeft + viewportWidth -
+             renderer.getTextAdvanceX(cachedFontId, line.text.c_str(), EpdFontFamily::REGULAR);
+    default:
+      // Left, and justified (plain text has no word spacing to stretch).
+      return cachedOrientedMarginLeft + (line.indented ? paragraphIndentWidth : 0);
+  }
+}
+
+void TxtReaderActivity::drawTextLines(const std::vector<TxtLine>& lines, const size_t from, const size_t to) const {
   const int lineHeight = renderer.getLineHeight(cachedFontId);
   const int contentWidth = viewportWidth;
   const int contentBottom = renderer.getScreenHeight() - cachedOrientedMarginBottom;
   auto* fcm = renderer.getFontCacheManager();
-
-  // Render text lines with alignment
-  auto renderLines = [&]() {
-    int y = cachedOrientedMarginTop;
-    for (const auto& line : currentPageLines) {
-      if (!line.text.empty()) {
-        int x = cachedOrientedMarginLeft + (line.indented ? paragraphIndentWidth : 0);
-        const bool lineIsRtl = BidiUtils::startsWithRtl(line.text.c_str(), BidiUtils::RTL_PARAGRAPH_PROBE_DEPTH);
-        uint8_t effectiveAlignment = cachedParagraphAlignment;
-        if (lineIsRtl && (effectiveAlignment == CrossPointSettings::LEFT_ALIGN ||
-                          effectiveAlignment == CrossPointSettings::JUSTIFIED)) {
-          effectiveAlignment = CrossPointSettings::RIGHT_ALIGN;
-        }
-        const int textWidth = renderer.getTextAdvanceX(cachedFontId, line.text.c_str(), EpdFontFamily::REGULAR);
-
-        // Apply text alignment
-        switch (effectiveAlignment) {
-          case CrossPointSettings::LEFT_ALIGN:
-          default:
-            // x already set to left margin
-            break;
-          case CrossPointSettings::CENTER_ALIGN: {
-            x = cachedOrientedMarginLeft + (contentWidth - textWidth) / 2;
-            break;
-          }
-          case CrossPointSettings::RIGHT_ALIGN: {
-            x = cachedOrientedMarginLeft + contentWidth - textWidth;
-            break;
-          }
-          case CrossPointSettings::JUSTIFIED:
-            // For plain text, justified is treated as left-aligned
-            // (true justification would require word spacing adjustments)
-            break;
-        }
-
-        renderer.drawText(cachedFontId, x, y, line.text.c_str());
-        const int guideY = y + lineHeight + SETTINGS.readingGuideLineOffset;
-        if (SETTINGS.readingGuideLineEnabled && !fcm->isScanning() &&
-            readingGuideLine::fitsVertically(SETTINGS.readingGuideLineStyle, guideY, cachedOrientedMarginTop,
-                                             contentBottom)) {
-          readingGuideLine::draw(renderer, cachedOrientedMarginLeft, guideY,
-                                 cachedOrientedMarginLeft + contentWidth - 1, SETTINGS.readingGuideLineStyle);
-        }
+  int y = cachedOrientedMarginTop + static_cast<int>(from) * lineHeight;
+  for (size_t row = from; row < to && row < lines.size(); ++row) {
+    const auto& line = lines[row];
+    if (!line.text.empty()) {
+      renderer.drawText(cachedFontId, lineStartX(line), y, line.text.c_str());
+      const int guideY = y + lineHeight + SETTINGS.readingGuideLineOffset;
+      if (SETTINGS.readingGuideLineEnabled && !fcm->isScanning() &&
+          readingGuideLine::fitsVertically(SETTINGS.readingGuideLineStyle, guideY, cachedOrientedMarginTop,
+                                           contentBottom)) {
+        readingGuideLine::draw(renderer, cachedOrientedMarginLeft, guideY,
+                               cachedOrientedMarginLeft + contentWidth - 1, SETTINGS.readingGuideLineStyle);
       }
-      y += lineHeight;
     }
+    y += lineHeight;
+  }
+}
+
+bool TxtReaderActivity::renderRollingFrame() {
+  const auto unsupported = [this] {
+    rollSupported = false;
+    rollStep = 0;
+    return false;
   };
+  if (currentPageEndOffset >= txt->getFileSize()) return unsupported();
+  if (nextPageLines.capacity() == 0) nextPageLines.reserve(linesPerPage);
+  size_t afterNext = currentPageEndOffset;
+  if (!loadPageAtOffset(currentPageEndOffset, nextPageLines, afterNext) || nextPageLines.empty()) {
+    return unsupported();
+  }
+  rollLineCount = static_cast<uint8_t>(std::min<size_t>(nextPageLines.size(), UINT8_MAX));
+  const size_t shown = std::min<size_t>(rollStep, nextPageLines.size());
+  const int lineHeight = renderer.getLineHeight(cachedFontId);
+
+  renderer.clearScreen();
+  drawTextLines(nextPageLines, 0, shown);
+  drawTextLines(currentPageLines, shown, currentPageLines.size());
+  // Dotted seam between the new and the old text marks where reading resumes.
+  const int seamY = cachedOrientedMarginTop + static_cast<int>(shown) * lineHeight - 1;
+  for (int x = cachedOrientedMarginLeft; x < cachedOrientedMarginLeft + viewportWidth; x += 4) {
+    renderer.drawPixel(x, seamY, true);
+    renderer.drawPixel(x + 1, seamY, true);
+  }
+  renderStatusBar();
+  // Line updates stay on the fast waveform; the turn at the end is an ordinary
+  // page render, so a rolled page counts once toward the N-page cleanup.
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  return true;
+}
+
+void TxtReaderActivity::renderPage() {
+  const auto t0 = millis();
+  auto* fcm = renderer.getFontCacheManager();
+
+  auto renderLines = [&]() { drawTextLines(currentPageLines, 0, currentPageLines.size()); };
 
   // Font prewarm: scan pass accumulates text, then prewarm, then real render
   auto scope = fcm->createPrewarmScope();
@@ -738,7 +1278,6 @@ void TxtReaderActivity::renderPage() {
   fcm->logStats("txt-page");
 
   // BW rendering
-  if (SETTINGS.readingBackgroundEnabled && !readingBackground::load(renderer)) renderer.clearScreen();
   renderLines();
   renderStatusBar();
   const auto tBwRender = millis();
@@ -783,12 +1322,16 @@ void TxtReaderActivity::renderPage() {
 }
 
 void TxtReaderActivity::renderStatusBar() const {
+  // UT37 marks auto turn with the tappable bottom-left badge; the centred title
+  // is left out meanwhile so the two never overlap.
+  const bool autoBadge = FREEINK_DEVICE_UT37 && autoTurnActive;
   std::string title;
-  if (SETTINGS.statusBarSpec().showsTitle()) {
+  if (!autoBadge && SETTINGS.statusBarSpec().showsTitle()) {
     title = txt->getTitle();
   }
-  GUI.drawStatusBar(renderer, getProgressPercent(), getDisplayPageNumber(), totalPages, title, 0, 0, true, false,
-                    !indexComplete || pageMode == PageMode::Direct);
+  GUI.drawStatusBar(renderer, getProgressPercent(), getDisplayPageNumber(), totalPages, title, 0, 0, true,
+                    currentPageBookmarked, !indexComplete || pageMode == PageMode::Direct);
+  if (autoBadge) ReaderUtils::drawAutoScrollLabel(renderer);
 }
 
 void TxtReaderActivity::saveProgress() const {
@@ -1042,15 +1585,3 @@ bool TxtReaderActivity::savePageIndexCache() {
   return true;
 }
 
-ScreenshotInfo TxtReaderActivity::getScreenshotInfo() const {
-  ScreenshotInfo info;
-  info.readerType = ScreenshotInfo::ReaderType::Txt;
-  if (txt) {
-    const std::string t = txt->getTitle();
-    snprintf(info.title, sizeof(info.title), "%s", t.c_str());
-  }
-  info.currentPage = getDisplayPageNumber();
-  info.totalPages = totalPages;
-  info.progressPercent = getProgressPercent();
-  return info;
-}

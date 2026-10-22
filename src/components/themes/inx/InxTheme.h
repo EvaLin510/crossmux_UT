@@ -1,5 +1,6 @@
 #pragma once
 
+#include "InxItemLayout.h"
 #include "components/themes/lyra/LyraTheme.h"
 
 namespace InxMetrics {
@@ -7,26 +8,38 @@ constexpr ThemeMetrics makeValues() {
   ThemeMetrics metrics = LyraMetrics::values;
   metrics.topPadding = 0;
   metrics.batteryBarHeight = 24;
-  metrics.headerHeight = 66;
+  // UT37: 22 px status strip + 22 px tab icon ink + 6 px gap + 3 px rule.
+  metrics.headerHeight = InxCompactLayout::enabled ? 53 : 66;
   metrics.verticalSpacing = 0;
-  metrics.contentSidePadding = 20;
-  metrics.listRowHeight = 66;
-  metrics.listWithSubtitleRowHeight = 66;
+  metrics.contentSidePadding = InxCompactLayout::sidePadding;
+  metrics.listRowHeight = InxCompactLayout::rowHeight;
+  metrics.listWithSubtitleRowHeight = InxCompactLayout::rowHeight;
   metrics.listRowGap = 0;
   metrics.listRowRadius = 0;
   metrics.listInset = 0;
-  metrics.listSidePadding = 20;
-  metrics.listSelectionStyle = 0;
+  metrics.listSidePadding = InxCompactLayout::sidePadding;
+  // FreeInkUI lists: 0 = InvertFill, 1 = LightPill (see InxSelection).
+  metrics.listSelectionStyle = InxSelection::inverts ? 0 : 1;
   metrics.listScrollWidth = 6;
   metrics.listScrollSide = 0;
   metrics.listTitleBold = false;
   metrics.listSeparatorStyle = 2;
-  metrics.listValueMaxWidth = 200;
+  metrics.listValueMaxWidth = InxCompactLayout::enabled ? 100 : 200;
   metrics.listSelectionCoversScrollReservation = true;
-  metrics.menuRowHeight = 66;
+  metrics.menuRowHeight = InxCompactLayout::rowHeight;
   metrics.menuSpacing = 0;
   metrics.scrollBarWidth = 6;
   metrics.scrollBarRightOffset = 2;
+  if (InxCompactLayout::enabled) {
+    // Feather-style battery hugging "100" in the status-bar font: 23x13 body
+    // (1 px frame, 1 px clear around the 19x9 ink), 1 px gap, 2 px nub
+    // (drawBatteryWithPercentInside).
+    metrics.batteryWidth = 26;
+    metrics.batteryHeight = 13;
+    // Reader footer: 6 px gap + 13 px text ink + 3 px gap, less the 3 px
+    // viewable inset (UITheme::kReaderFooterTextFromBottom places the text).
+    metrics.statusBarVerticalMargin = 19;
+  }
   return metrics;
 }
 inline constexpr ThemeMetrics values = makeValues();
@@ -34,6 +47,7 @@ inline constexpr ThemeMetrics values = makeValues();
 
 class InxTheme final : public LyraTheme {
  public:
+  void drawStatusStrip(const GfxRenderer& renderer, Rect rect) const override;
   void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title,
                   const char* subtitle = nullptr) const override;
   void drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label,

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <BoardConfig.h>
 #include <CrossPointSettings.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
@@ -7,9 +8,13 @@
 #include <Logging.h>
 #include <components/bars/tap-zones.h>
 
+#include <algorithm>
+
 #include "MappedInputManager.h"
 #include "ReaderRefresh.h"
 #include "activities/ActivityManager.h"
+#include "components/UITheme.h"
+#include "fontIds.h"
 
 namespace ReaderUtils {
 
@@ -18,6 +23,43 @@ constexpr unsigned long GO_BACK_OR_HOME_MS = GO_HOME_MS;
 constexpr unsigned long SKIP_HOLD_MS = 700;
 constexpr unsigned long BOOKMARK_HOLD_MS = 400;
 constexpr unsigned long BOOKMARK_MESSAGE_DURATION_MS = 2500;
+
+// UT37 auto page turn badge: "Auto-scroll" at the bottom-left of the status
+// lane while auto turn runs; tapping it stops auto turn. Drawing and
+// hit-testing share this one rect.
+inline Rect autoScrollLabelRect(const GfxRenderer& renderer) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  int top = 0;
+  int right = 0;
+  int bottom = 0;
+  int left = 0;
+  renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
+  // Same lane as the status bar's progress text (BaseTheme::drawStatusBar).
+#if FREEINK_DEVICE_UT37
+  const int y = renderer.getScreenHeight() - UITheme::kReaderFooterTextFromBottom;
+#else
+  const int y = renderer.getScreenHeight() - UITheme::getInstance().getStatusBarHeight() - bottom - 4;
+#endif
+  const int x = metrics.statusBarHorizontalMargin + left + 1;
+  return Rect{x, y, renderer.getTextWidth(SMALL_FONT_ID, tr(STR_AUTO_SCROLL)), renderer.getLineHeight(SMALL_FONT_ID)};
+}
+
+inline void drawAutoScrollLabel(const GfxRenderer& renderer) {
+  const Rect rect = autoScrollLabelRect(renderer);
+  renderer.drawText(SMALL_FONT_ID, rect.x, rect.y, tr(STR_AUTO_SCROLL));
+}
+
+inline bool wasAutoScrollLabelTapped(const GfxRenderer& renderer, const MappedInputManager& input) {
+  if (!input.hasTouch()) return false;
+  int x = 0;
+  int y = 0;
+  if (!input.wasScreenTapped(x, y)) return false;
+  const Rect rect = autoScrollLabelRect(renderer);
+  // Grow the small text to a finger-sized target, down to the screen edge.
+  constexpr int kSlop = 12;
+  return x >= rect.x - kSlop && x < rect.x + rect.width + kSlop && y >= rect.y - kSlop &&
+         y < renderer.getScreenHeight();
+}
 
 enum ReaderTouchAction : freeink::ui::ActionId {
   READER_TOUCH_PREV = 1,
@@ -62,8 +104,14 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
   };
   const bool prev =
       tiltPrev || (pageButtonTriggered(MappedInputManager::Button::PageBack) || pageButtonTriggered(prevButton));
-  const bool powerTurn = SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
-                         input.wasReleased(MappedInputManager::Button::Power);
+  const bool powerTurn = (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
+                          input.wasReleased(MappedInputManager::Button::Power))
+#if FREEINK_DEVICE_UT37
+                         || (SETTINGS.longPwrBtn == CrossPointSettings::LONG_PAGE_TURN &&
+                             input.wasLongPressed(MappedInputManager::Button::Power,
+                                                  MappedInputManager::FUNCTION_KEY_LONG_PRESS_MS))
+#endif
+      ;
   const bool next = tiltNext || pageButtonTriggered(MappedInputManager::Button::PageForward) || powerTurn ||
                     pageButtonTriggered(nextButton);
   return {prev, next, tiltPrev || tiltNext};
@@ -83,7 +131,9 @@ inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer, const MappedInpu
 
   if (SETTINGS.touchReaderControls == CrossPointSettings::TOUCH_READER_SWIPE) {
     // Horizontal swipes turn pages; taps remain free for the centered reader-menu
-    // zone. A slow swipe never becomes a long-press chapter skip.
+    // zone. A slow swipe never becomes a long-press chapter skip. The UT37
+    // left-edge exit swipe belongs to handleBackNavigation, not to paging.
+    if (input.wasReaderEdgeBackGesture()) return result;
     const auto dir = input.wasSwipe();
     if (dir == MappedInputManager::SwipeDir::Left) {
       result.next = true;
@@ -137,6 +187,16 @@ inline bool isTouchMenuTap(const GfxRenderer& renderer, const MappedInputManager
   const int zoneWidth = width / 3;
   const int zoneHeight = height / 3;
   return x >= zoneWidth && x < width - zoneWidth && y >= zoneHeight && y < height - zoneHeight;
+}
+
+// Reader "Touch long-press": the 3x3 zone (row-major, 0 = top-left) holding a
+// logical screen point, indexing CrossPointSettings::touchLongPress.
+inline int touchLongPressZone(const GfxRenderer& renderer, const int x, const int y) {
+  const int width = std::max(1, renderer.getScreenWidth());
+  const int height = std::max(1, renderer.getScreenHeight());
+  const int col = std::clamp(x * 3 / width, 0, 2);
+  const int row = std::clamp(y * 3 / height, 0, 2);
+  return row * 3 + col;
 }
 
 // Reader menu opens on the menu edge-swipe or a center-third tap. On home-key
@@ -199,12 +259,25 @@ struct BackNavCallback {
 // - with backShortToFileBrowser: go to file browser.
 inline bool handleBackNavigation(const MappedInputManager& mappedInput, ActivityManager& activityManager,
                                  const char* filePath, BackNavCallback goHome) {
-  // The reading surface deliberately has no left-edge swipe-to-exit path: in
-  // swipe page-turn mode a right swipe must page back instead. Home remains
-  // available through the board's dedicated Home gesture/key. Back swipes stay
-  // available in menus and other activities; only this reader-surface handler
-  // ignores them. Physical Back buttons are unaffected: isPressed() is
-  // button-only, and this guard skips just the gesture's own release frame.
+  // UT37 has no Back key: the left-edge swipe that is Back everywhere else
+  // leaves the book like a short Back press. Its band is narrow, so right
+  // swipes started mid-page keep paging back (see detectTouchPageTurn).
+  if (mappedInput.wasReaderEdgeBackGesture()) {
+    if (SETTINGS.backShortToFileBrowser) {
+      activityManager.goToFileBrowser(filePath);
+    } else {
+      goHome.fn(goHome.ctx);
+    }
+    return true;
+  }
+
+  // Elsewhere the reading surface deliberately has no left-edge swipe-to-exit
+  // path: in swipe page-turn mode a right swipe must page back instead. Home
+  // remains available through the board's dedicated Home gesture/key. Back
+  // swipes stay available in menus and other activities; only this
+  // reader-surface handler ignores them. Physical Back buttons are unaffected:
+  // isPressed() is button-only, and this guard skips just the gesture's own
+  // release frame.
   if (mappedInput.wasBackGesture()) {
     return false;
   }

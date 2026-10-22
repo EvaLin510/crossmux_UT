@@ -25,6 +25,10 @@ inline freeink::ui::ThemeTokens uiThemeTokens(const freeink::ui::GfxRendererTarg
   const ThemeMetrics& metrics = UITheme::getInstance().getMetrics();
 
   fui::ThemeTokens tokens = fui::themeTokensForLineHeight(target.lineHeight(fui::GfxRendererTarget::FONT_BODY));
+#if FREEINK_DEVICE_UT37
+  // One row height for every UT37 list, instead of the line-height default.
+  tokens.rowHeight = static_cast<int16_t>(metrics.listRowHeight);
+#endif
   tokens.listRowGap = static_cast<int16_t>(metrics.listRowGap);
   tokens.listRowRadius = static_cast<uint8_t>(metrics.listRowRadius);
   tokens.listInset = static_cast<int16_t>(metrics.listInset);

@@ -12,7 +12,15 @@ class SleepActivity final : public Activity {
       : Activity("Sleep", renderer, mappedInput), fromTimeout(fromTimeout) {}
   void onEnter() override;
 
+  // UT37 power off: show the "powered off" screen instead of the chosen sleep
+  // screen. Set right before enterDeepSleep(); the chip never comes back to
+  // this process (deep sleep ends in a reset), so it is never cleared.
+  static void setPowerOffScreen(bool enabled) { powerOffScreen = enabled; }
+
  private:
+  static inline bool powerOffScreen = false;
+
+  void renderPowerOffScreen() const;
   void renderDefaultSleepScreen() const;
   void renderCustomSleepScreen() const;
   void renderCoverSleepScreen() const;

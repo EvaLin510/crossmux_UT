@@ -18,6 +18,50 @@ released with the font, is never used by UI fallback sizes, and does not change
 the persistent cache format. Allocation failure leaves the existing Flash/SD
 path unchanged.
 
+### Bitmap UI faces (`CROSSMUX_BITMAP_UI_FONT`)
+
+UT37 (3.7" 240x416, ~150 PPI) renders the thresholded outline UI fonts blurry,
+and the unified build's embedded CJK UI subset is Simplified-only, so
+Traditional-Chinese book titles miss glyphs. `builtinFonts/all.h` sets
+`CROSSMUX_BITMAP_UI_FONT` for `FREEINK_DEVICE_UT37`; `main.cpp` then registers
+the built-in 1-bit WenQuanYi Zen Hei faces `wqy_zhenghei_10/12/14` as the CJK UI
+fonts for `SMALL_FONT_ID`, `UI_10_FONT_ID` and `UI_12_FONT_ID` with
+`setFallbackFont(..., replacesPrimary = true)`, and drops `notosans_cjk_8/10`
+(`notosans_cjk_12` stays as the offline reader fallback). Sizes are picked by
+rendered pixels: 13/14/15 px per CJK cell, against ~21 px for the outline 10pt
+body font.
+
+A replacing fallback draws every string it covers, Latin included; only non-CJK
+strings that contain a glyph it lacks (icons) stay on the primary font.
+`getLineHeight()`, `getFontAscenderSize()` and `getTextHeight()` report the
+replacement's metrics, so list rows and headers shrink with the text. The faces
+have a single regular style, so bold UI text renders regular.
+
+The built-in UI faces hold 3,393 glyphs each: every non-CJK glyph of the
+source, every CJK character of the Chinese UI translations, and the 2,000 most
+frequent Traditional + Simplified characters in `wqy_ui_chars.txt` (ranked by
+`wordfreq`, which scores both forms of a character alike). The 16 px reader face
+keeps the full 7,183-glyph charset: Big5 level-1 (5,401 Traditional characters)
+and `cn_common_chars.txt`. They are generated from `.cpfont` bitmap strikes by
+`lib/EpdFont/scripts/cpfont_to_builtin.py` (sources in the gitignored
+`builtinFonts/source/WQYZhengHei/`); the three UI sizes share
+`wqy_zhenghei_ui_intervals.h`. Measured from the generated data: 203 KB of 1-bit
+bitmaps, 163 KB of glyph tables and 27 KB of intervals for the UI faces, ~390 KB
+less Flash than the earlier full-charset UI faces, no RAM change. About 99% of
+the characters in ordinary Chinese text are covered by the built-in UI faces.
+
+Rare characters come from the complete family on the SD card when present.
+`SdCardFontSystem::setupSdUiFont()` loads the first installed family of
+`SD_UI_FONT_FAMILIES` (`WQYZhengHei`, then `WenQuanDian`) from
+`/.fonts/<family>/` or `/fonts/<family>/` at sizes 10/12/14, as standalone fonts
+owned by a second `SdCardFontManager`, and maps each built-in face to its
+size-matched SD font as an ordinary (non-replacing) CJK fallback.
+`resolveTextFontId()` follows that one extra hop for CJK strings the built-in
+subset cannot draw. These SD fonts get no PSRAM glyph cache, since they only
+serve rare glyphs. Font ids are seeded with `<family>#ui`, so selecting the same
+family as the reader font loads a separate, non-colliding reader instance.
+Reader unloads remove only their own fonts.
+
 On no-PSRAM targets, optional advance-table and page prewarm allocations must
 leave 16 KiB free heap and 8 KiB contiguous headroom. Their budgets include
 simultaneously live collection, mapping, staging and replacement buffers; old

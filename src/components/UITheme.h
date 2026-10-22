@@ -39,6 +39,15 @@ class UITheme {
   static std::string getCoverThumbPath(std::string coverBmpPath, int coverHeight);
   static UIIcon getFileIcon(const std::string& filename);
   static int getStatusBarHeight();
+  // Reader top strip (UT37: clock left, battery right); 0 on other boards.
+  // UT37 draws the strip from the screen's top edge, so the reserve is what is
+  // left of it below the oriented viewable margin.
+  static int getStatusBarTopHeight(int orientedMarginTop = 0);
+  static constexpr int kReaderTopStripHeight = 22;
+  // UT37 reader footer: line-box top of the status text, measured up from the
+  // panel's bottom edge. The small face inks rows 2..14 of its line, so the ink
+  // ends 3 px above the edge (outer gap); Inx reserves 6 px above it (inner gap).
+  static constexpr int kReaderFooterTextFromBottom = 18;
   static int getProgressBarHeight();
 
  private:

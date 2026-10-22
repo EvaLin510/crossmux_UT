@@ -20,6 +20,7 @@
 #include "ReadingStatsExtendedActivity.h"
 #include "ReadingStatsStore.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "components/PositionBar.h"
 #include "components/UITheme.h"
 #include "components/icons/cover.h"
 #include "fontIds.h"
@@ -39,6 +40,9 @@ constexpr int BOOK_ROW_GAP = 10;
 constexpr int BOOKS_PER_PAGE = 3;
 constexpr int INX_TEXT_GAP = 4;
 constexpr int INX_CELL_VERTICAL_PADDING = 12;
+// UT37: statistics paragraphs (title, cover, left grid column) share the
+// content's left edge instead of centring or indenting.
+constexpr bool INX_ALIGN_LEFT = InxCompactLayout::enabled;
 constexpr float kPi = 3.14159265358979323846f;
 
 std::string getBookTitle(const ReadingBookStats& book) { return book.title.empty() ? book.path : book.title; }
@@ -48,13 +52,6 @@ std::string getBookSubtitle(const ReadingBookStats& book) {
     return book.author;
   }
   return book.completed ? std::string(tr(STR_DONE)) : std::string(tr(STR_IN_PROGRESS));
-}
-
-void drawMetricCard(const GfxRenderer& renderer, const Rect& rect, const char* label, const std::string& value,
-                    const bool showCheck = false) {
-  AppMetricCard::Options options;
-  options.showCheck = showCheck;
-  AppMetricCard::draw(renderer, rect, label, value, options);
 }
 
 void drawMoreDetailsButton(const GfxRenderer& renderer, const Rect& rect, const bool selected) {
@@ -178,7 +175,8 @@ void drawStatsGrid(const GfxRenderer& renderer, const Rect rect, const int rows,
     const int row = index / 2;
     const int cellTop = rect.y + row * cellHeight;
     const int textY = cellTop + std::max(0, (cellHeight - textHeight) / 2);
-    const Rect valueRect{rect.x + column * cellWidth + 10, textY, cellWidth - 20, valueHeight};
+    const int inset = INX_ALIGN_LEFT && column == 0 ? 0 : 10;
+    const Rect valueRect{rect.x + column * cellWidth + inset, textY, cellWidth - inset - 10, valueHeight};
     drawClippedText(renderer, UI_12_FONT_ID, valueRect, values[index], EpdFontFamily::BOLD);
     drawClippedText(renderer, SMALL_FONT_ID,
                     Rect{valueRect.x, valueRect.y + valueHeight + INX_TEXT_GAP, valueRect.width, labelHeight},
@@ -507,9 +505,6 @@ void ReadingStatsActivity::render(RenderLock&&) {
   const int cardWidth = (pageWidth - sidePadding * 2 - SUMMARY_GAP) / 2;
   const int summaryTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int detailsTop = summaryTop + SUMMARY_CARD_HEIGHT * 3 + SUMMARY_GAP * 2 + metrics.verticalSpacing;
-  const uint64_t todayReadingMs = READING_STATS.getTodayReadingMs();
-  const std::string dailyGoalValue = ReadingStatsAnalytics::formatDurationHm(todayReadingMs) + " / " +
-                                     ReadingStatsAnalytics::formatDurationHm(getDailyReadingGoalMs());
 
   if (usesMainTabBar()) {
     drawPageHeader(Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_READING_STATS));
@@ -517,24 +512,7 @@ void ReadingStatsActivity::render(RenderLock&&) {
     HeaderDateUtils::drawHeaderWithDate(renderer, tr(STR_READING_STATS));
   }
 
-  drawMetricCard(renderer, Rect{sidePadding, summaryTop, cardWidth, SUMMARY_CARD_HEIGHT}, tr(STR_STREAK),
-                 std::to_string(READING_STATS.getCurrentStreakDays()));
-  drawMetricCard(renderer, Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop, cardWidth, SUMMARY_CARD_HEIGHT},
-                 tr(STR_MAX_STREAK), std::to_string(READING_STATS.getMaxStreakDays()));
-  drawMetricCard(renderer,
-                 Rect{sidePadding, summaryTop + SUMMARY_CARD_HEIGHT + SUMMARY_GAP, cardWidth, SUMMARY_CARD_HEIGHT},
-                 tr(STR_DAILY_GOAL), dailyGoalValue, todayReadingMs >= getDailyReadingGoalMs());
-  drawMetricCard(renderer,
-                 Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop + SUMMARY_CARD_HEIGHT + SUMMARY_GAP, cardWidth,
-                      SUMMARY_CARD_HEIGHT},
-                 tr(STR_READING_TIME), ReadingStatsAnalytics::formatDurationHm(READING_STATS.getTotalReadingMs()));
-  drawMetricCard(
-      renderer, Rect{sidePadding, summaryTop + (SUMMARY_CARD_HEIGHT + SUMMARY_GAP) * 2, cardWidth, SUMMARY_CARD_HEIGHT},
-      tr(STR_BOOKS_FINISHED), std::to_string(READING_STATS.getBooksFinishedCount()));
-  drawMetricCard(renderer,
-                 Rect{sidePadding + cardWidth + SUMMARY_GAP, summaryTop + (SUMMARY_CARD_HEIGHT + SUMMARY_GAP) * 2,
-                      cardWidth, SUMMARY_CARD_HEIGHT},
-                 tr(STR_BOOKS_STARTED), std::to_string(READING_STATS.getBooksStartedCount()));
+  AppMetricCard::drawSummaryGrid(renderer, sidePadding, summaryTop, cardWidth, SUMMARY_CARD_HEIGHT, SUMMARY_GAP);
 
   drawMoreDetailsButton(renderer, Rect{sidePadding, detailsTop, pageWidth - sidePadding * 2, DETAILS_BUTTON_HEIGHT},
                         selectedIndex == 0);
@@ -592,8 +570,14 @@ void ReadingStatsActivity::renderInx() {
   if (selectedIndex == 0 || books.empty()) {
     int top = content.y;
     if (usesMainTabBar()) {
-      drawCenteredClippedText(renderer, NOTOSERIF_14_FONT_ID, Rect{content.x, top + 4, content.width, pageTitleHeight},
-                              tr(STR_READING_STATS), EpdFontFamily::BOLD);
+      if (INX_ALIGN_LEFT) {
+        drawClippedText(renderer, NOTOSERIF_14_FONT_ID, Rect{content.x, top + 4, content.width, pageTitleHeight},
+                        tr(STR_READING_STATS), EpdFontFamily::BOLD);
+      } else {
+        drawCenteredClippedText(renderer, NOTOSERIF_14_FONT_ID,
+                                Rect{content.x, top + 4, content.width, pageTitleHeight}, tr(STR_READING_STATS),
+                                EpdFontFamily::BOLD);
+      }
       top += pageTitleHeight + 8;
     }
     const int availableHeight = std::max(1, content.y + content.height - top);
@@ -617,7 +601,7 @@ void ReadingStatsActivity::renderInx() {
     } else {
       const ReadingBookStats& recentBook = books.front();
       const auto coverSize = InxCoverGeometry::fit(recent.width * 28 / 100, recent.height - 12);
-      const Rect cover{recent.x + 4, recent.y + (recent.height - coverSize.height) / 2, coverSize.width,
+      const Rect cover{recent.x + (INX_ALIGN_LEFT ? 0 : 4), recent.y + (recent.height - coverSize.height) / 2, coverSize.width,
                        coverSize.height};
       renderedCoverMissing = !drawCover(renderer, recentBook, cover);
 
@@ -735,6 +719,13 @@ void ReadingStatsActivity::renderInx() {
     snprintf(position, sizeof(position), "%d/%u", selectedIndex, static_cast<unsigned>(books.size()));
     drawCenteredClippedText(renderer, UI_10_FONT_ID, Rect{footer.x, footer.y + 4, footer.width, bodyHeight}, position,
                             EpdFontFamily::BOLD);
+  }
+
+  if constexpr (InxCompactLayout::enabled) {
+    // Views page sideways (overview, then one per book): bottom position bar,
+    // 3 px clear below its thumb.
+    position_bar::drawHorizontal(renderer, content.x, screenHeight - 3 - position_bar::kThumbWidth + 1, content.width,
+                                 InxStatisticsGeometry::viewCount(static_cast<int>(books.size())), 1, selectedIndex);
   }
 
   const auto labels = mainTabButtonLabels(tr(STR_BACK), tr(STR_SELECT), !books.empty());

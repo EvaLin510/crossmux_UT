@@ -17,7 +17,6 @@ enum class SettingAction {
   RemapFrontButtons,
   Bluetooth,
   CustomiseStatusBar,
-  ReadingStatsSettings,
   AppVisibility,
   KOReaderSync,
   OPDSBrowser,
@@ -32,7 +31,7 @@ enum class SettingAction {
   ManageDictionaries,
   TextSettings,
   About,
-  KeyboardLayouts,
+  TouchLongPress,
 };
 
 struct SettingInfo {
@@ -55,7 +54,6 @@ struct SettingInfo {
   StrId category = StrId::STR_NONE_OPT;  // Category for web UI grouping
   bool obfuscated = false;               // Save/load via base64 obfuscation (passwords)
   bool inTextSettings = false;           // Surfaced in the Text Settings screen; hidden from the flat Reader list
-  bool inReadingStatsSettings = false;   // Surfaced in Reading Stats Settings; hidden from the flat Reader list
   bool managedEnumPicker = false;        // Always open a picker; the dynamic setter owns the change lifecycle
 
   // Direct char[] string fields (for settings stored in CrossPointSettings)
@@ -75,11 +73,6 @@ struct SettingInfo {
 
   SettingInfo& withTextSettings() {
     inTextSettings = true;
-    return *this;
-  }
-
-  SettingInfo& withReadingStatsSettings() {
-    inReadingStatsSettings = true;
     return *this;
   }
 
@@ -213,7 +206,14 @@ class SettingsActivity final : public UiTabListActivity {
   void rebuildRowItems();
   void rebuildAccordionRows();
 
+#if FREEINK_DEVICE_UT37
+  // UT37: Display & Controls / Reader / System & Device. controlsSettings
+  // stays empty; category 2 is systemSettings.
+  static constexpr int categoryCount = 3;
+  void groupUt37Settings(std::vector<SettingInfo>& pool);
+#else
   static constexpr int categoryCount = 4;
+#endif
   static const StrId categoryNames[categoryCount];
 
   // --- UiTabListActivity contract ---
@@ -243,8 +243,6 @@ class SettingsActivity final : public UiTabListActivity {
   std::array<int, categoryCount> accordionSettingCounts() const;
   void openOtaUpdate();
   void openSleepTimeoutPicker();
-  void openReadingBackgroundMenu();
-  void openReadingBackgroundPicker();
   void confirmRestoreSystemSettings();
   void releaseListsForMemoryHungryChild();
   void rebuildSettingsLists();

@@ -26,17 +26,16 @@
 #include "FontDownloadActivity.h"
 #include "InxItemLayout.h"
 #include "KOReaderSettingsActivity.h"
-#include "KeyboardLayoutsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
 #include "OtaUpdateActivity.h"
-#include "ReadingStatsSettingsActivity.h"
 #include "SdCardFontSystem.h"
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsList.h"
 #include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
+#include "TouchLongPressSettingsActivity.h"
 #include "TextSettingsActivity.h"
 #include "activities/home/FileBrowserActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -47,7 +46,6 @@
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
 #include "util/ButtonNavigator.h"
-#include "util/ReadingBackground.h"
 #include "util/SystemSettingsReset.h"
 
 namespace fui = freeink::ui;
@@ -211,7 +209,7 @@ class AboutActivity final : public Activity {
         return value;
       }
       case AboutRow::HeapFreeTotal:
-        snprintf(value, sizeof(value), "%lu / %lu", static_cast<unsigned long>(heapInfo.freeBytes / 1024),
+        snprintf(value, sizeof(value), "%lu/%lu", static_cast<unsigned long>(heapInfo.freeBytes / 1024),
                  static_cast<unsigned long>(heapInfo.totalBytes / 1024));
         return value;
       case AboutRow::LargestHeapBlock:
@@ -221,7 +219,7 @@ class AboutActivity final : public Activity {
 #ifdef SIMULATOR
         return tr(STR_NOT_AVAILABLE);
 #else
-        snprintf(value, sizeof(value), "%lu / %lu", static_cast<unsigned long>(heapInfo.freePsramBytes / 1024),
+        snprintf(value, sizeof(value), "%lu/%lu", static_cast<unsigned long>(heapInfo.freePsramBytes / 1024),
                  static_cast<unsigned long>(heapInfo.totalPsramBytes / 1024));
         return value;
 #endif
@@ -236,7 +234,7 @@ class AboutActivity final : public Activity {
         }
         const uint64_t usedTenths = (sdTotalBytes - sdFreeBytes + BYTES_PER_TENTH_GB / 2) / BYTES_PER_TENTH_GB;
         const uint64_t totalTenths = (sdTotalBytes + BYTES_PER_TENTH_GB / 2) / BYTES_PER_TENTH_GB;
-        snprintf(value, sizeof(value), "%llu.%llu / %llu.%llu", static_cast<unsigned long long>(usedTenths / 10),
+        snprintf(value, sizeof(value), "%llu.%llu/%llu.%llu", static_cast<unsigned long long>(usedTenths / 10),
                  static_cast<unsigned long long>(usedTenths % 10), static_cast<unsigned long long>(totalTenths / 10),
                  static_cast<unsigned long long>(totalTenths % 10));
         return value;
@@ -262,8 +260,13 @@ class AboutActivity final : public Activity {
 };
 }  // namespace
 
+#if FREEINK_DEVICE_UT37
+const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY_CONTROLS, StrId::STR_CAT_READER,
+                                                              StrId::STR_CAT_SYSTEM_DEVICE};
+#else
 const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
                                                               StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
+#endif
 
 SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : UiTabListActivity("Settings", renderer, mappedInput) {}
@@ -289,6 +292,50 @@ void SettingsActivity::rebuildSettingsLists() {
   std::vector<DictionaryEntry> dictionaries;
   if (!usesAccordion() || dictionariesLoaded) DictionaryRegistry::discover(dictionaries);
 
+#if FREEINK_DEVICE_UT37
+  {
+    // Transient pool (~35 rows, moved not copied) so groupUt37Settings() can
+    // lay rows out in the device order regardless of their source category;
+    // freed at the end of this scope.
+    std::vector<SettingInfo> pool;
+    pool.reserve(40);
+    for (auto& setting : getSettingsList(&sdFontSystem.registry(), &dictionaries)) {
+      // Sub-page rows (KOReader Sync, status bar) are owned by their own
+      // activities, same as the non-UT37 path below.
+      if (setting.category != StrId::STR_CAT_DISPLAY && setting.category != StrId::STR_CAT_READER &&
+          setting.category != StrId::STR_CAT_CONTROLS && setting.category != StrId::STR_CAT_SYSTEM) {
+        continue;
+      }
+      if (setting.category == StrId::STR_CAT_READER && setting.inTextSettings) continue;
+      if (setting.valuePtr == &CrossPointSettings::clockAutoSync ||
+          setting.valuePtr == &CrossPointSettings::clockUtcOffsetQ ||
+          setting.valuePtr == &CrossPointSettings::clockFormat) {
+        continue;
+      }
+      pool.push_back(std::move(setting));
+    }
+#if FREEINK_CAP_BLE_HID_HOST
+    pool.push_back(SettingInfo::Action(StrId::STR_BLUETOOTH, SettingAction::Bluetooth));
+#endif
+    pool.push_back(SettingInfo::Action(StrId::STR_APP_VISIBILITY, SettingAction::AppVisibility));
+    pool.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
+    pool.push_back(SettingInfo::Action(StrId::STR_DATE_AND_TIME, SettingAction::DateTime));
+    pool.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
+    pool.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
+    pool.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
+    pool.push_back(SettingInfo::Action(StrId::STR_RESTORE_SYSTEM_SETTINGS, SettingAction::RestoreSystemSettings));
+    pool.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
+    pool.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
+    pool.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
+    pool.push_back(SettingInfo::Action(StrId::STR_ABOUT, SettingAction::About));
+    pool.push_back(SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
+    pool.push_back(SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
+    pool.push_back(SettingInfo::Action(StrId::STR_MANAGE_DICTIONARIES, SettingAction::ManageDictionaries));
+    pool.push_back(SettingInfo::Action(StrId::STR_READING_TOUCH_LONG_PRESS, SettingAction::TouchLongPress));
+    pool.push_back(SettingInfo::Action(StrId::STR_READING_STATUS_BAR, SettingAction::CustomiseStatusBar));
+    groupUt37Settings(pool);
+  }
+#else
   for (auto& setting : getSettingsList(&sdFontSystem.registry(), &dictionaries)) {
     if (setting.category == StrId::STR_NONE_OPT) continue;
     if (!usesAccordion() && (setting.valuePtr == &CrossPointSettings::inxRecentLayout ||
@@ -306,13 +353,9 @@ void SettingsActivity::rebuildSettingsLists() {
     } else if (setting.category == StrId::STR_CAT_READER) {
       // Settings merged into "Text Settings"
       // (they stay in the shared list for the web settings API)
-      if (setting.inTextSettings || setting.inReadingStatsSettings) continue;
+      if (setting.inTextSettings) continue;
       readerSettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_CONTROLS) {
-      if (setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&
-          SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::FOOTNOTES) {
-        continue;
-      }
       controlsSettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_SYSTEM) {
       // These stay in the shared list for persistence and the web API, but the
@@ -362,7 +405,6 @@ void SettingsActivity::rebuildSettingsLists() {
   // UI but are intentionally absent from release assets in this sync.
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_KEYBOARD_LAYOUTS, SettingAction::KeyboardLayouts));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_ABOUT, SettingAction::About));
   readerSettings.insert(readerSettings.begin(),
@@ -378,26 +420,79 @@ void SettingsActivity::rebuildSettingsLists() {
     std::rotate(readerSettings.begin() + 3, dictionarySetting, dictionarySetting + 1);
   }
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
-  readerSettings.push_back(SettingInfo::Action(StrId::STR_READING_STATS, SettingAction::ReadingStatsSettings));
+#endif
 
   // Update currentSettings pointer and count for the active category
-  switch (selectedCategoryIndex) {
-    case 0:
-      currentSettings = &displaySettings;
-      break;
-    case 1:
-      currentSettings = &readerSettings;
-      break;
-    case 2:
-      currentSettings = &controlsSettings;
-      break;
-    case 3:
-      currentSettings = &systemSettings;
-      break;
-  }
+  currentSettings = &settingsForCategory(selectedCategoryIndex);
   settingsCount = static_cast<int>(currentSettings->size());
   rebuildRowItems();
 }
+
+#if FREEINK_DEVICE_UT37
+// UT37 device order. Rows not named here keep their source category and land
+// at the end of it, so a newly added setting never silently disappears.
+void SettingsActivity::groupUt37Settings(std::vector<SettingInfo>& pool) {
+  const auto take = [&pool](std::vector<SettingInfo>& out, const auto& matches) {
+    const auto it = std::find_if(pool.begin(), pool.end(), matches);
+    if (it == pool.end()) return;
+    out.push_back(std::move(*it));
+    pool.erase(it);
+  };
+  // By label: UT37's mapped enums carry no valuePtr.
+  const auto name = [](const StrId id) { return [id](const SettingInfo& s) { return s.nameId == id; }; };
+  const auto action = [](const SettingAction a) {
+    return [a](const SettingInfo& s) { return s.type == SettingType::ACTION && s.action == a; };
+  };
+
+  // Removed from the device UI (still persisted and on the web settings page).
+  pool.erase(std::remove_if(pool.begin(), pool.end(), name(StrId::STR_REMOVE_READ_FROM_RECENTS)),
+             pool.end());
+
+  displaySettings.reserve(pool.size());
+  take(displaySettings, name(StrId::STR_INX_RECENT_LAYOUT));
+  take(displaySettings, name(StrId::STR_INX_APPS_LAYOUT));
+  take(displaySettings, name(StrId::STR_SLEEP_SCREEN));
+  take(displaySettings, name(StrId::STR_SLEEP_COVER_MODE));
+  take(displaySettings, name(StrId::STR_REFRESH_FREQ));
+  take(displaySettings, name(StrId::STR_RESTORE_LIGHT_ON_WAKE));
+  take(displaySettings, name(StrId::STR_FUNC_KEY_SHORT));
+  take(displaySettings, name(StrId::STR_FUNC_KEY_LONG));
+  take(displaySettings, action(SettingAction::TouchLongPress));
+  take(displaySettings, action(SettingAction::CustomiseStatusBar));
+
+  take(readerSettings, action(SettingAction::TextSettings));
+  take(readerSettings, action(SettingAction::DownloadFonts));
+  take(readerSettings, action(SettingAction::ManageDictionaries));
+  take(readerSettings, name(StrId::STR_DICTIONARY));
+  take(readerSettings, name(StrId::STR_EPUB_IMAGES));
+  take(readerSettings, name(StrId::STR_MOVE_READ_TO_READ_FOLDER));
+  take(readerSettings, action(SettingAction::KOReaderSync));
+  take(readerSettings, action(SettingAction::OPDSBrowser));
+  take(readerSettings, action(SettingAction::ClearCache));
+
+  take(systemSettings, action(SettingAction::Network));
+  take(systemSettings, action(SettingAction::Bluetooth));
+  take(systemSettings, action(SettingAction::DateTime));
+  take(systemSettings, name(StrId::STR_TIME_TO_SLEEP));
+  take(systemSettings, action(SettingAction::Language));
+  take(systemSettings, action(SettingAction::AppVisibility));
+  take(systemSettings, name(StrId::STR_SHOW_HIDDEN_FILES));
+  take(systemSettings, action(SettingAction::RestoreSystemSettings));
+  take(systemSettings, action(SettingAction::About));
+  take(systemSettings, action(SettingAction::CheckForUpdates));
+  take(systemSettings, action(SettingAction::SdFirmwareUpdate));
+
+  for (auto& setting : pool) {
+    if (setting.category == StrId::STR_CAT_DISPLAY || setting.category == StrId::STR_CAT_CONTROLS) {
+      displaySettings.push_back(std::move(setting));
+    } else if (setting.category == StrId::STR_CAT_READER) {
+      readerSettings.push_back(std::move(setting));
+    } else {
+      systemSettings.push_back(std::move(setting));
+    }
+  }
+}
+#endif
 
 void SettingsActivity::onEnter() {
   UiTabListActivity::onEnter();
@@ -417,20 +512,7 @@ void SettingsActivity::onEnter() {
 
 void SettingsActivity::selectCategory(const int categoryIndex) {
   selectedCategoryIndex = categoryIndex;
-  switch (selectedCategoryIndex) {
-    case 0:
-      currentSettings = &displaySettings;
-      break;
-    case 1:
-      currentSettings = &readerSettings;
-      break;
-    case 2:
-      currentSettings = &controlsSettings;
-      break;
-    case 3:
-      currentSettings = &systemSettings;
-      break;
-  }
+  currentSettings = &settingsForCategory(selectedCategoryIndex);
   settingsCount = static_cast<int>(currentSettings->size());
   activeNav().top = 0;  // category switches start the list at the top (no per-tab memory here)
   rebuildRowItems();
@@ -625,17 +707,23 @@ const std::vector<SettingInfo>& SettingsActivity::settingsForCategory(const int 
       return displaySettings;
     case 1:
       return readerSettings;
+#if FREEINK_DEVICE_UT37
+    case 2:
+      return systemSettings;
+#else
     case 2:
       return controlsSettings;
     case 3:
       return systemSettings;
+#endif
   }
   return displaySettings;
 }
 
 std::array<int, SettingsActivity::categoryCount> SettingsActivity::accordionSettingCounts() const {
-  return {static_cast<int>(displaySettings.size()), static_cast<int>(readerSettings.size()),
-          static_cast<int>(controlsSettings.size()), static_cast<int>(systemSettings.size())};
+  std::array<int, categoryCount> counts{};
+  for (int i = 0; i < categoryCount; ++i) counts[i] = static_cast<int>(settingsForCategory(i).size());
+  return counts;
 }
 
 void SettingsActivity::toggleAccordionCategory(const int categoryIndex) {
@@ -682,11 +770,6 @@ void SettingsActivity::toggleCurrentSetting() {
 
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
     openSleepTimeoutPicker();
-    return;
-  }
-
-  if (setting.valuePtr == &CrossPointSettings::readingBackgroundEnabled) {
-    openReadingBackgroundMenu();
     return;
   }
 
@@ -776,8 +859,10 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::CustomiseStatusBar:
         startActivityForResultWith<StatusBarSettingsActivity>(resultHandler);
         break;
-      case SettingAction::ReadingStatsSettings:
-        startActivityForResultWith<ReadingStatsSettingsActivity>(resultHandler);
+      case SettingAction::TouchLongPress:
+#if FREEINK_DEVICE_UT37
+        startActivityForResultWith<TouchLongPressSettingsActivity>(resultHandler);
+#endif
         break;
       case SettingAction::AppVisibility:
         startActivityForResultWith<AppVisibilitySettingsActivity>(resultHandler);
@@ -840,13 +925,6 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::About:
         startActivityForResultWith<AboutActivity>(resultHandler);
-        break;
-      case SettingAction::KeyboardLayouts:
-        if (auto activity = makeUniqueNoThrow<KeyboardLayoutsActivity>(renderer, mappedInput)) {
-          startActivityForResult(std::move(activity), nullptr);
-        } else {
-          LOG_ERR("SETTINGS", "OOM: KeyboardLayoutsActivity");
-        }
         break;
       case SettingAction::None:
         // Do nothing
@@ -960,53 +1038,13 @@ void SettingsActivity::openSleepTimeoutPicker() {
       StrId::STR_SLEEP_TIMER_VALUE_FORMAT, false, StrId::STR_SLEEP_NEVER);
 }
 
-void SettingsActivity::openReadingBackgroundMenu() {
-  static constexpr StrId OPTIONS[] = {StrId::STR_STATE_OFF, StrId::STR_CUSTOM_IMAGE};
-  optionPopup.show(StrId::STR_READING_BACKGROUND, OPTIONS, static_cast<int>(std::size(OPTIONS)),
-                   SETTINGS.readingBackgroundEnabled ? 1 : 0, [this](const int selected) {
-                     if (selected == 0) {
-                       SETTINGS.readingBackgroundEnabled = 0;
-                       SETTINGS.saveToFile();
-                       requestUpdate();
-                       return;
-                     }
-                     openReadingBackgroundPicker();
-                   });
-  requestUpdate();
-}
-
-void SettingsActivity::openReadingBackgroundPicker() {
-  const bool started = startActivityForResultWith<FileBrowserActivity>(
-      [this](const ActivityResult& result) {
-        if (result.isCancelled) return;
-        const auto* selected = std::get_if<FilePathResult>(&result.data);
-        if (!selected) {
-          LOG_ERR("SET", "PNG picker returned no path");
-          return;
-        }
-
-        GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-        if (readingBackground::createCacheFromPng(renderer, selected->path.c_str())) {
-          SETTINGS.readingBackgroundEnabled = 1;
-          SETTINGS.saveToFile();
-          requestUpdate();
-        } else {
-          optionPopup.show(StrId::STR_FAILED_LOWER, OK_OPTION, static_cast<int>(std::size(OK_OPTION)), 0, [](int) {});
-        }
-      },
-      "/", FileBrowserActivity::Mode::PickPng);
-  if (!started) {
-    optionPopup.show(StrId::STR_MEMORY_ERROR, OK_OPTION, static_cast<int>(std::size(OK_OPTION)), 0, [](int) {});
-    requestUpdate();
-  }
-}
-
 std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
-  if (setting.valuePtr == &CrossPointSettings::readingBackgroundEnabled) {
-    return SETTINGS.readingBackgroundEnabled ? tr(STR_CUSTOM_IMAGE) : tr(STR_STATE_OFF);
-  }
   if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
     return SETTINGS.*(setting.valuePtr) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+  }
+  if (setting.nameId == StrId::STR_BLUETOOTH) {
+    // An action row that opens Bluetooth settings, labelled with its switch state.
+    return SETTINGS.bluetoothEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
   }
   if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     // Guard like the valueGetter branch below: a corrupt/migrated settings
@@ -1044,8 +1082,9 @@ void SettingsActivity::buildScreen(UiScreen& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const bool boldChineseCategories = I18N.getLanguage() == Language::ZH_CN;
   // Content below the GUI.drawHeader band, above the button hints.
-  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
-                                                static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+  screen.setContentMarginFromScreen(
+      fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight + InxCompactLayout::contentTopGap), 0,
+                  static_cast<int16_t>(metrics.buttonHintsHeight), 0});
 
   if (usesAccordion()) {
     const auto counts = accordionSettingCounts();

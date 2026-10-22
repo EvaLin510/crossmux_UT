@@ -55,6 +55,35 @@ decompressed glyph pixels and metrics against the full fonts; the existing
 The CJK generator's shared Unicode indices are described in
 [chinese-build.md](chinese-build.md#regenerating-the-cjk-fonts).
 
+### UT37 bitmap UI fonts
+
+`wqy_zhenghei_{10,12,14,16}.h`, `wqy_zhenghei_intervals.h` (16 px reader face)
+and `wqy_zhenghei_ui_intervals.h` (10/12/14 px UI faces) are generated from
+1-bit `.cpfont` bitmap strikes (placed in the gitignored
+`lib/EpdFont/builtinFonts/source/WQYZhengHei/`). Regenerate all sizes at once,
+because each charset group must share one interval table:
+
+```bash
+python3 lib/EpdFont/scripts/cpfont_to_builtin.py lib/EpdFont/builtinFonts wqy_zhenghei \
+    lib/EpdFont/builtinFonts/source/WQYZhengHei/WQYZhengHei_{10,12,14,16}.cpfont \
+    --ui-sizes 10,12,14
+```
+
+The UI faces' extra characters come from the committed
+`lib/EpdFont/scripts/wqy_ui_chars.txt` (the 2000 most frequent characters of
+the reader charset). Re-rank it only to change that count, with
+`cpfont_to_builtin.py --write-ui-charset <N>` (needs `wordfreq` and `jieba`).
+
+The SD-card WQYZhengHei family comes from the same font: strikes 8-16 (named by
+the source export) are repaired in place with
+`lib/EpdFont/scripts/cpfont_advance_fix.py` (ink-overrun advances: `:`, `(`,
+curly quotes), and sizes above the 16 px strike are rendered 1-bit with native
+hinting by `build_mono_cpfont.py` (e.g. `... WenQuanYi.ttf WQYZhengHei_16.cpfont
+out/WQYZhengHei 18 20 22`), so no size is anti-aliased.
+
+The charset and runtime wiring are described in
+[sd-card-font-cache.md](sd-card-font-cache.md#bitmap-ui-faces-crossmux_bitmap_ui_font).
+
 **To change HTML pages**:
 1. Edit source: `src/network/html/<locale>/<pagename>.html`
 2. Build: `pio run` (auto-triggers `scripts/build_html.py`)

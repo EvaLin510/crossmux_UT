@@ -23,7 +23,7 @@ class LanguageSelectActivity final : public UiListActivity {
   void onEnter() override;
 
  private:
-  int listCount() const override { return totalItems; }
+  int listCount() const override { return visibleCount; }
   void buildScreen(UiScreen& screen) override;
   void activateIndex(int index) override;
   const char* headerTitle() const override;
@@ -37,7 +37,10 @@ class LanguageSelectActivity final : public UiListActivity {
   // array avoids any heap allocation for the row list. Built once in
   // onEnter() — activateIndex() finishes the activity immediately on
   // selection, so buildScreen() never needs to see a different "Selected"
-  // row within one visit.
+  // row within one visit. Only I18n::isLanguageAvailable() languages are
+  // listed; visibleLanguages maps a row to its Language value.
   freeink::ui::ListItem rowItems[totalItems]{};
+  uint8_t visibleLanguages[totalItems]{};
+  uint8_t visibleCount = 0;
   const Mode mode_;
 };

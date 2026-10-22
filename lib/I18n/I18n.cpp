@@ -51,6 +51,14 @@ Language I18n::languageFromCode(const char* code) {
 
 bool I18n::isLanguageAvailable(Language lang) {
   if (static_cast<uint8_t>(lang) >= getLanguageCount()) return false;
+#if FREEINK_DEVICE_UT37
+  // UT37 offers English and the two Chinese UIs only; its built-in bitmap UI
+  // faces cover Simplified and Traditional characters.
+  return lang == Language::EN || lang == Language::ZH_CN || lang == Language::ZH_TW;
+#endif
+  // Elsewhere the built-in CJK UI subset is Simplified-only, so Traditional
+  // strings would render with missing glyphs.
+  if (lang == Language::ZH_TW) return false;
 #ifndef ENABLE_CHINESE_VERSION
   // CJK glyphs ship only with the Chinese SKU; the global build embeds Latin
   // fonts only, so Chinese strings render as garbled boxes even though ZH_CN's

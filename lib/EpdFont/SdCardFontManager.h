@@ -30,6 +30,13 @@ class SdCardFontManager {
   // or loading failed.
   int loadFamilyExtraSize(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t pointSize);
 
+  // Load one .cpfont that is not part of a reader-family selection (e.g. a
+  // fixed SD UI face). `idName` seeds the font id, so a distinct name keeps the
+  // id from colliding when the reader loads the same file. Returns the font id,
+  // or 0 on failure.
+  int loadStandaloneFile(const SdCardFontFileInfo& file, const char* idName, GfxRenderer& renderer,
+                         bool enablePsramGlyphCache);
+
   // Unload everything, unregister from renderer.
   void unloadAll(GfxRenderer& renderer);
 

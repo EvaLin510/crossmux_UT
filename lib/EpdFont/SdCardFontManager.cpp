@@ -97,11 +97,16 @@ int SdCardFontManager::loadFamilyExtraSize(const SdCardFontFamilyInfo& family, G
   return loadFile(*file, family.name.c_str(), renderer, false, false);
 }
 
+int SdCardFontManager::loadStandaloneFile(const SdCardFontFileInfo& file, const char* idName, GfxRenderer& renderer,
+                                          bool enablePsramGlyphCache) {
+  return loadFile(file, idName, renderer, false, enablePsramGlyphCache);
+}
+
 void SdCardFontManager::unloadAll(GfxRenderer& renderer) {
-  renderer.clearSdCardFonts();
   for (auto& lf : loaded_) {
-    // removeFont drops only mappings that reference this SD font, preserving
-    // unrelated built-in CJK UI fallbacks.
+    // removeFont drops only this font's SD registration and the mappings that
+    // reference it, preserving fonts owned by another manager (SD UI faces)
+    // and unrelated built-in CJK UI fallbacks.
     renderer.removeFont(lf.fontId);
     delete lf.font;
   }

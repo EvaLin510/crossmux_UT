@@ -1,5 +1,6 @@
 #include "FileBrowserActivity.h"
 
+#include <Arduino.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -39,6 +40,22 @@ std::string cleanEntryName(std::string entry) {
 std::string joinPath(const std::string& parent, const std::string& name) {
   return parent == "/" ? "/" + name : parent + "/" + name;
 }
+
+bool isOpenableBook(const std::string_view filename) {
+  return FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
+         FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename) ||
+         FsHelpers::hasBmpExtension(filename) || FsHelpers::hasPngExtension(filename) ||
+         FsHelpers::hasJpgExtension(filename);
+}
+
+// UT37's Library doubles as the file manager: it lists every file (so a WiFi
+// upload of any type shows up and can be deleted/moved) and only opens the
+// supported ones. Other boards keep the books-only list.
+#if FREEINK_DEVICE_UT37
+constexpr bool kLibraryListsAllFiles = true;
+#else
+constexpr bool kLibraryListsAllFiles = false;
+#endif
 }  // namespace
 
 std::string getFileName(std::string filename);
@@ -90,11 +107,7 @@ void FileBrowserActivity::loadFiles() {
       std::string_view filename{fileNameBuffer.get()};
       switch (mode) {
         case Mode::Books:
-          if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
-              FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename) ||
-              FsHelpers::hasBmpExtension(filename) || FsHelpers::hasPngExtension(filename)) {
-            files.emplace_back(filename);
-          }
+          if (kLibraryListsAllFiles || isOpenableBook(filename)) files.emplace_back(filename);
           break;
         case Mode::PickFirmware:
           if (FsHelpers::checkFileExtension(filename, ".bin")) files.emplace_back(filename);
@@ -161,6 +174,8 @@ void FileBrowserActivity::rebuildRowItems() {
 }
 
 bool FileBrowserActivity::usesIconLayout() const {
+  // UT37's Library is list-only (setting removed); the icon grid compiles out.
+  if constexpr (InxCompactLayout::enabled) return false;
   return mode == Mode::Books && browserState == BrowserState::Browsing && UITheme::getInstance().hasMainTabs() &&
          InxGridGeometry::layoutFrom(SETTINGS.inxLibraryLayout) == InxItemLayout::Icons;
 }
@@ -178,19 +193,23 @@ void FileBrowserActivity::drawIconGrid(UiScreen& screen, const fui::Rect rect) c
     const int row = slot / InxGridGeometry::columns;
     const Rect cell{rect.x + column * cellWidth + 4, rect.y + row * cellHeight + 4, cellWidth - 8, cellHeight - 8};
     const bool selected = showSelection && index == nav.selected;
-    if (selected) renderer.fillRect(cell.x, cell.y, cell.width, cell.height, true);
+    const bool inverted = selected && InxSelection::inverts;
+    if (inverted)
+      renderer.fillRect(cell.x, cell.y, cell.width, cell.height, true);
+    else if (selected)
+      renderer.fillRectDither(cell.x, cell.y, cell.width, cell.height, Color::LightGray);
     const UIIcon type = UITheme::getFileIcon(files[index]);
     const uint8_t* icon = type == UIIcon::Folder ? FolderLarge : (type == UIIcon::Image ? ImageLarge : BookLarge);
     const int iconX = cell.x + (cell.width - iconSize) / 2;
     const int iconY = cell.y + std::max(4, (cell.height - iconSize - lineHeight - 6) / 2);
-    if (selected)
+    if (inverted)
       renderer.drawIconInverted(icon, iconX, iconY, iconSize);
     else
       renderer.drawIcon(icon, iconX, iconY, iconSize);
     const char* label =
         index < static_cast<int>(gridLabels.size()) ? gridLabels[index].c_str() : rowNames[index].c_str();
     const int labelX = cell.x + (cell.width - renderer.getTextWidth(UI_10_FONT_ID, label)) / 2;
-    renderer.drawText(UI_10_FONT_ID, labelX, iconY + iconSize + 6, label, !selected);
+    renderer.drawText(UI_10_FONT_ID, labelX, iconY + iconSize + 6, label, !inverted);
     screen.frame().hit(fui::Rect{static_cast<int16_t>(cell.x), static_cast<int16_t>(cell.y),
                                  static_cast<int16_t>(cell.width), static_cast<int16_t>(cell.height)},
                        ACTION_ROW, static_cast<int16_t>(index), fui::InputTouch | fui::InputLongPress);
@@ -598,6 +617,16 @@ void FileBrowserActivity::activateSelected() {
     return;
   }
 
+  if (!isDirectory && !isOpenableBook(entry)) {
+    {
+      RenderLock lock(*this);
+      GUI.drawPopup(renderer, tr(STR_UNSUPPORTED_FILE));
+    }
+    delay(1000);
+    requestUpdate();
+    return;
+  }
+
   RenderLock lock(*this);
   if (basepath.back() != '/') basepath += "/";
   if (isDirectory) {
@@ -718,18 +747,34 @@ std::string getFileExtension(const std::string& filename) {
 void FileBrowserActivity::buildScreen(UiScreen& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   // Content below the GUI.drawHeader band, above the button hints.
-  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
-                                                static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+  screen.setContentMarginFromScreen(
+      fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight + InxCompactLayout::contentTopGap), 0,
+                  static_cast<int16_t>(metrics.buttonHintsHeight), 0});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   // Full path band at the bottom: separator on top, left-truncated so the
   // deepest directory stays visible.
   {
+    // The separator gets its own rows plus a fixed gap: INX sets
+    // verticalSpacing to 0, which used to put the text under the separator.
     const int pathLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
-    const fui::Rect band = screen.takeBottom(static_cast<int16_t>(pathLineHeight + metrics.verticalSpacing));
-    screen.target().fill(fui::Rect{band.x, band.y, band.width, 3}, fui::Paint::solid(fui::Color::Black));
-    const int pathY =
-        band.y + metrics.verticalSpacing / 2 + (band.height - metrics.verticalSpacing / 2 - pathLineHeight) / 2;
+#if FREEINK_DEVICE_UT37
+    // Bottom info bar: 2 px rule, then 4 px clear above and below the path's
+    // ink. The UT37 small face inks rows 2..14 of its 18 px line, and the
+    // safe area already stops 3 px above the panel edge, so the line box may
+    // overhang the band by 2 px.
+    constexpr int separatorHeight = 2;
+    constexpr int pathGap = 2;
+    const fui::Rect band = screen.takeBottom(static_cast<int16_t>(separatorHeight + pathGap + pathLineHeight - 2));
+#else
+    constexpr int separatorHeight = 3;
+    const int pathGap = std::max(3, metrics.verticalSpacing / 2);
+    const fui::Rect band =
+        screen.takeBottom(static_cast<int16_t>(separatorHeight + pathGap + pathLineHeight + pathGap));
+#endif
+    screen.target().fill(fui::Rect{band.x, band.y, band.width, separatorHeight},
+                         fui::Paint::solid(fui::Color::Black));
+    const int pathY = band.y + separatorHeight + pathGap;
     const int pathMaxWidth = band.width - metrics.contentSidePadding * 2;
     const char* pathStr = basepath.c_str();
     const char* pathDisplay = pathStr;

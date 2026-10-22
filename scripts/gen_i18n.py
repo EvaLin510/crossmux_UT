@@ -1047,7 +1047,15 @@ if __name__ == "__main__":
 else:
     try:
         Import("env")
-        print("[gen_i18n] unified firmware; building full i18n")
-        main(strip_unused=True)
+        # Single-device builds can ship only the UI languages they expose
+        # (e.g. env:ut37: custom_i18n_languages = EN ZH_CN ZH_TW). English is
+        # always kept as the fallback; unknown V1 codes migrate to English.
+        _only = env.GetProjectOption("custom_i18n_languages", "").split()  # noqa: F821
+        if _only:
+            print("[gen_i18n] restricted firmware; languages: " + " ".join(_only))
+            main(strip_unused=True, only_languages=set(_only))
+        else:
+            print("[gen_i18n] unified firmware; building full i18n")
+            main(strip_unused=True)
     except NameError:
         pass

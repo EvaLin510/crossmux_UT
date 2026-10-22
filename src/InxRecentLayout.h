@@ -6,7 +6,14 @@
 enum class InxRecentLayout : uint8_t { Flow, Grid, List, Icons, Cover, Count };
 
 namespace InxRecentGeometry {
+// Bottom band kept free on the Recent tab (battery on boards without a top
+// status strip). UT37 shows the battery in its header strip, so it keeps only
+// a few pixels of air above the bezel.
+#if FREEINK_DEVICE_UT37
+inline constexpr int footerReservedHeight = 8;
+#else
 inline constexpr int footerReservedHeight = 40;
+#endif
 
 constexpr int contentHeight(const int screenHeight, const int top, const int buttonHintsHeight) {
   return std::max(0, screenHeight - top - std::max(buttonHintsHeight, footerReservedHeight));

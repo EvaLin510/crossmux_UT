@@ -189,14 +189,18 @@ void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) {
 }
 
 int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const EpdFontFamily::Style style) const {
-  if (fallbackFontMap_.empty() || text == nullptr || *text == '\0') {
+  if ((fallbackFontMap_.empty() && defaultCjkFallbackFontId_ == 0) || text == nullptr || *text == '\0') {
     return fontId;
   }
   const auto fbIt = fallbackFontMap_.find(fontId);
-  if (fbIt == fallbackFontMap_.end()) {
-    return fontId;  // no fallback registered for this font
+  // Fonts without their own mapping (e.g. reader faces reused for UI titles)
+  // still get the board's default CJK fallback, so a CJK string never stops at
+  // the first glyph the primary lacks.
+  if (fbIt == fallbackFontMap_.end() && (defaultCjkFallbackFontId_ == 0 || defaultCjkFallbackFontId_ == fontId)) {
+    return fontId;
   }
-  const int fallbackFontId = fbIt->second;
+  const bool replacesPrimary = fbIt != fallbackFontMap_.end() && fbIt->second.replacesPrimary;
+  const int fallbackFontId = fbIt != fallbackFontMap_.end() ? fbIt->second.fontId : defaultCjkFallbackFontId_;
   const auto fontIt = fontMap.find(fontId);
   const auto fallbackIt = fontMap.find(fallbackFontId);
   if (fontIt == fontMap.end() || fallbackIt == fontMap.end()) {
@@ -206,14 +210,45 @@ int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const Epd
   const EpdFontFamily& fallback = fallbackIt->second;
   const char* cursor = text;
   uint32_t cp;
+  if (replacesPrimary) {
+    // Keep the primary only for non-CJK strings with a symbol the replacement
+    // lacks (e.g. icon glyphs); CJK strings always need the replacement.
+    bool hasCjk = false;
+    bool primaryOnlyGlyph = false;
+    while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor)))) {
+      if (utf8IsCjkCodepoint(cp)) {
+        hasCjk = true;
+      } else if (!fallback.hasCodepoint(cp, style) && primary.hasCodepoint(cp, style)) {
+        primaryOnlyGlyph = true;
+      }
+    }
+    if (!hasCjk && primaryOnlyGlyph) return fontId;
+    // A replacing face may itself map to a non-replacing CJK fallback (built-in
+    // subset -> complete SD family for rare characters). Follow that one hop.
+    const auto chainIt = fallbackFontMap_.find(fallbackFontId);
+    if (hasCjk && chainIt != fallbackFontMap_.end() && !chainIt->second.replacesPrimary) {
+      return resolveTextFontId(fallbackFontId, text, style);
+    }
+    return fallbackFontId;
+  }
+  // The fallback may chain to one more non-replacing face (built-in subset ->
+  // complete SD family); a glyph either can draw is a reason to switch.
+  const auto chainIt = fallbackFontMap_.find(fallbackFontId);
+  const EpdFontFamily* chained = nullptr;
+  if (chainIt != fallbackFontMap_.end() && !chainIt->second.replacesPrimary) {
+    const auto chainFontIt = fontMap.find(chainIt->second.fontId);
+    if (chainFontIt != fontMap.end()) chained = &chainFontIt->second;
+  }
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor)))) {
     // Only redirect for CJK the primary font cannot draw but the fallback can.
     // Latin/symbol strings the built-in UI fonts already cover are left
     // untouched, and a partial-coverage fallback (e.g. kana-only) is not worth
     // dragging the whole string into for glyphs it would also miss.
-    if (utf8IsCjkCodepoint(cp) && !primary.hasCodepoint(cp, style) && fallback.hasCodepoint(cp, style)) {
-      return fallbackFontId;
+    if (!utf8IsCjkCodepoint(cp) || primary.hasCodepoint(cp, style)) continue;
+    if (fallback.hasCodepoint(cp, style)) {
+      return chained ? resolveTextFontId(fallbackFontId, text, style) : fallbackFontId;
     }
+    if (chained && chained->hasCodepoint(cp, style)) return chainIt->second.fontId;
   }
   return fontId;
 }
@@ -2237,8 +2272,16 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
   return widthPx;
 }
 
+int GfxRenderer::metricsFontId(const int fontId) const {
+  // A replacing fallback draws nearly every string, so layout metrics (row
+  // heights, baselines) must come from it rather than the unused primary.
+  const auto fbIt = fallbackFontMap_.find(fontId);
+  if (fbIt == fallbackFontMap_.end() || !fbIt->second.replacesPrimary) return fontId;
+  return fontMap.count(fbIt->second.fontId) != 0 ? fbIt->second.fontId : fontId;
+}
+
 int GfxRenderer::getFontAscenderSize(const int fontId) const {
-  const auto fontIt = fontMap.find(fontId);
+  const auto fontIt = fontMap.find(metricsFontId(fontId));
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
     return 0;
@@ -2248,7 +2291,7 @@ int GfxRenderer::getFontAscenderSize(const int fontId) const {
 }
 
 int GfxRenderer::getLineHeight(const int fontId) const {
-  const auto fontIt = fontMap.find(fontId);
+  const auto fontIt = fontMap.find(metricsFontId(fontId));
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
     return 0;
@@ -2262,7 +2305,7 @@ int GfxRenderer::getLineHeight(const int fontId, const float compression) const 
 }
 
 int GfxRenderer::getTextHeight(const int fontId) const {
-  const auto fontIt = fontMap.find(fontId);
+  const auto fontIt = fontMap.find(metricsFontId(fontId));
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
     return 0;

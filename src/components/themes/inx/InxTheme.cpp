@@ -11,20 +11,37 @@
 #include "CrossPointSettings.h"
 #include "I18n.h"
 #include "InxItemLayout.h"
+#include "components/PositionBar.h"
+#include "components/StatusStrip.h"
 #include "components/UITheme.h"
 #include "components/icons/inx_apps.h"
+#include "components/icons/inxTabs26.h"
 #include "components/icons/inx_tabs.h"
+#include "components/icons/listIcons16.h"
 #include "fontIds.h"
+#include "util/TimeUtils.h"
 
 namespace {
-constexpr int kIconSize = 38;
-constexpr int kUnderlineHeight = 5;
-constexpr int kRowHeight = 66;
-constexpr int kRowPadding = 20;
-constexpr int kListIconSize = 24;
+// UT37 uses the smaller hand-aligned tab icons from inxTabs26.h.
+constexpr int kIconSize = InxCompactLayout::enabled ? 26 : 38;
+constexpr int kUnderlineHeight = InxCompactLayout::enabled ? 3 : 5;
+// UT37: clear rows between the tab icons' ink and the underline rule. The 26 px
+// tab bitmaps ink rows 2..23 (22 px), so the cell sits kTabIconInkBottom rows
+// above that gap.
+constexpr int kTabIconGap = 6;
+constexpr int kTabIconInkBottom = 23;
+constexpr bool kCompact = InxCompactLayout::enabled;
+constexpr int kRowHeight = InxCompactLayout::rowHeight;
+constexpr int kRowPadding = InxCompactLayout::sidePadding;
+// Compact lists use hand-drawn 16 px icons (listIcons16.h), not scaled 24 px.
+constexpr int kListIconSize = kCompact ? 16 : 24;
 constexpr int kMenuIconSize = 32;
-constexpr int kIconGap = 10;
-constexpr int kMaxValueWidth = 200;
+constexpr int kIconGap = kCompact ? 6 : 10;
+constexpr int kMaxValueWidth = kCompact ? 100 : 200;
+constexpr int kStripHeight = InxCompactLayout::statusStripHeight;
+// Compact headings and titles: one UI size above body text, regular weight
+// (the bitmap UI faces have no bold, and the serif reader font looked off).
+constexpr auto kHeadingStyle = kCompact ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
 constexpr int kSideHintY = 345;
 constexpr int kX3SideHintY = 155;
 constexpr int kHintWidth = 80;
@@ -46,6 +63,23 @@ const char* hintLabel(const char* label) {
 }
 
 const uint8_t* iconForTab(const MainTab tab) {
+  if constexpr (InxCompactLayout::enabled) {
+    switch (tab) {
+      case MainTab::Recent:
+        return InxRecentTabIcon26;
+      case MainTab::Library:
+        return InxLibraryTabIcon26;
+      case MainTab::Settings:
+        return InxSettingsTabIcon26;
+      case MainTab::Statistics:
+        return InxStatisticsTabIcon26;
+      case MainTab::Apps:
+        return InxAppsTabIcon26;
+      case MainTab::None:
+        return nullptr;
+    }
+    return nullptr;
+  }
   switch (tab) {
     case MainTab::Recent:
       return InxRecentTabIcon;
@@ -73,20 +107,75 @@ void drawInxIcon(const GfxRenderer& renderer, const uint8_t* icon, const int x, 
   }
 }
 
+void fillSelection(const GfxRenderer& renderer, const int x, const int y, const int width, const int height) {
+  if (InxSelection::inverts)
+    renderer.fillRect(x, y, width, height, true);
+  else
+    renderer.fillRectDither(x, y, width, height, Color::LightGray);
+}
+
 void drawDottedSeparator(const GfxRenderer& renderer, const int x, const int y, const int width) {
   for (int px = x; px < x + width; px += 3) renderer.drawPixel(px, y, true);
 }
+
+const uint8_t* compactListIcon(const UIIcon icon) {
+  switch (icon) {
+    case UIIcon::Folder:
+      return Folder16Icon;
+    case UIIcon::Text:
+      return Text16Icon;
+    case UIIcon::Image:
+      return Image16Icon;
+    case UIIcon::Book:
+      return Book16Icon;
+    case UIIcon::File:
+      return File16Icon;
+    default:
+      return nullptr;
+  }
+}
 }  // namespace
+
+// Compact top strip: clock on the left, battery on the right (the shared
+// status_strip module, so every screen places them identically).
+void InxTheme::drawStatusStrip(const GfxRenderer& renderer, const Rect rect) const {
+  status_strip::draw(renderer, rect.y, rect.x, rect.x + rect.width);
+}
 
 void InxTheme::drawHeader(const GfxRenderer& renderer, const Rect rect, const char* title, const char* subtitle) const {
   renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
+  if constexpr (kCompact) {
+    drawStatusStrip(renderer, Rect{rect.x, rect.y, rect.width, kStripHeight});
+    const int bandTop = rect.y + kStripHeight;
+    const int bandHeight = rect.height - kStripHeight - 1;
+    int titleRight = rect.x + rect.width - kRowPadding;
+    if (subtitle && *subtitle) {
+      const int subtitleWidth =
+          std::min(renderer.getTextWidth(SMALL_FONT_ID, subtitle), std::max(0, rect.width / 2 - kRowPadding));
+      titleRight -= subtitleWidth + kIconGap;
+      if (subtitleWidth > 0) {
+        const int subtitleHeight = renderer.getLineHeight(SMALL_FONT_ID);
+        const int subtitleY = bandTop + std::max(0, (bandHeight - subtitleHeight) / 2);
+        const GfxRenderer::ClipScope clip(renderer, titleRight + kIconGap, subtitleY, subtitleWidth, subtitleHeight);
+        renderer.drawText(SMALL_FONT_ID, titleRight + kIconGap, subtitleY, subtitle);
+      }
+    }
+    if (title && *title && titleRight > rect.x + kRowPadding) {
+      // Page titles (e.g. the book title above the reader menu) match the list
+      // text size; only in-list headings step up to UI_12.
+      const int titleHeight = renderer.getLineHeight(UI_10_FONT_ID);
+      const int titleY = bandTop + std::max(0, (bandHeight - titleHeight) / 2);
+      const std::string shown =
+          renderer.truncatedText(UI_10_FONT_ID, title, titleRight - rect.x - kRowPadding, kHeadingStyle);
+      renderer.drawText(UI_10_FONT_ID, rect.x + kRowPadding, titleY, shown.c_str(), true, kHeadingStyle);
+    }
+    renderer.drawLine(rect.x, rect.y + rect.height - 1, rect.x + rect.width - 1, rect.y + rect.height - 1, true);
+    return;
+  }
 
-  const bool showBatteryPercentage =
-      SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
-  const int batteryX = rect.x + rect.width - 12 - InxMetrics::values.batteryWidth;
-  drawBatteryRight(renderer,
-                   Rect{batteryX, rect.y + 5, InxMetrics::values.batteryWidth, InxMetrics::values.batteryHeight},
-                   showBatteryPercentage);
+  // Clock and battery from the shared module, centred in the header's top band.
+  status_strip::draw(renderer, rect.y + (InxMetrics::values.batteryBarHeight - status_strip::kHeight) / 2, rect.x,
+                     rect.x + rect.width);
 
   const int titleTop = rect.y + InxMetrics::values.batteryBarHeight;
   const int rightPadding = InxMetrics::values.contentSidePadding;
@@ -134,7 +223,7 @@ void InxTheme::drawSubHeader(const GfxRenderer& renderer, const Rect rect, const
                                       rect.height - 1);
     renderer.drawText(UI_10_FONT_ID, rect.x + padding,
                       rect.y + std::max(0, (rect.height - renderer.getLineHeight(UI_10_FONT_ID)) / 2), label, true,
-                      EpdFontFamily::BOLD);
+                      kHeadingStyle);
   }
   drawDottedSeparator(renderer, rect.x, rect.y + rect.height - 1, rect.width);
 }
@@ -147,14 +236,15 @@ void InxTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const st
     const int left = rect.x + rect.width * index / count;
     const int right = rect.x + rect.width * (index + 1) / count;
     const bool active = tabs[index].selected;
-    if (active) renderer.fillRect(left, rect.y, right - left, rect.height - 1, true);
+    if (active) fillSelection(renderer, left, rect.y, right - left, rect.height - 1);
+    const bool inverted = active && InxSelection::inverts;
     const int textWidth =
         renderer.getTextWidth(UI_10_FONT_ID, tabs[index].label, active ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
     const int textX = left + std::max(0, (right - left - textWidth) / 2);
     const GfxRenderer::ClipScope clip(renderer, left, rect.y, right - left, rect.height - 1);
     renderer.drawText(UI_10_FONT_ID, textX,
                       rect.y + std::max(0, (rect.height - renderer.getLineHeight(UI_10_FONT_ID)) / 2),
-                      tabs[index].label, !active, active ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+                      tabs[index].label, !inverted, active ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
   }
   renderer.drawLine(rect.x, rect.y + rect.height - 1, rect.x + rect.width - 1, rect.y + rect.height - 1, true);
 }
@@ -239,13 +329,17 @@ void InxTheme::drawList(const GfxRenderer& renderer, const Rect rect, const int 
     const int slot = index - pageStart;
     const int rowY = rect.y + slot * kRowHeight;
     const bool selected = selectionVisible && index == selectedIndex;
-    if (selected) renderer.fillRect(rect.x, rowY, rect.width, kRowHeight, true);
+    if (selected) fillSelection(renderer, rect.x, rowY, rect.width, kRowHeight);
+    const bool inverted = selected && InxSelection::inverts;
 
     int textX = rect.x + kRowPadding;
     if (rowIcon) {
-      if (const uint8_t* bitmap = iconForName(rowIcon(index), iconSize)) {
+      const UIIcon icon = rowIcon(index);
+      const uint8_t* bitmap =
+          kCompact && iconSize == kListIconSize ? compactListIcon(icon) : iconForName(icon, iconSize);
+      if (bitmap) {
         const int iconY = rowY + (kRowHeight - iconSize) / 2;
-        if (selected)
+        if (inverted)
           renderer.drawIconInverted(bitmap, textX, iconY, iconSize);
         else
           renderer.drawIcon(bitmap, textX, iconY, iconSize);
@@ -261,20 +355,26 @@ void InxTheme::drawList(const GfxRenderer& renderer, const Rect rect, const int 
     }
     const bool heading = rowHeading && rowHeading(index);
     const int titleFont = heading ? UI_12_FONT_ID : UI_10_FONT_ID;
-    const auto titleStyle = heading ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+    const auto titleStyle = heading ? kHeadingStyle : EpdFontFamily::REGULAR;
     const int textWidth = std::max(1, contentRight - kRowPadding - textX - valueWidth);
     const std::string title = renderer.truncatedText(titleFont, rowTitle(index).c_str(), textWidth, titleStyle);
-    const int titleY = rowY + (rowSubtitle ? 12 : (kRowHeight - renderer.getLineHeight(titleFont)) / 2);
-    renderer.drawText(titleFont, textX, titleY, title.c_str(), !selected, titleStyle);
+    // Compact rows centre the title + subtitle block from line heights.
+    const int titleHeight = renderer.getLineHeight(titleFont);
+    const int blockHeight = titleHeight + (rowSubtitle ? renderer.getLineHeight(SMALL_FONT_ID) : 0);
+    const int titleY = kCompact    ? rowY + std::max(0, (kRowHeight - blockHeight) / 2)
+                       : rowSubtitle ? rowY + 12
+                                     : rowY + (kRowHeight - titleHeight) / 2;
+    renderer.drawText(titleFont, textX, titleY, title.c_str(), !inverted, titleStyle);
 
     if (rowSubtitle) {
       const std::string subtitle = renderer.truncatedText(SMALL_FONT_ID, rowSubtitle(index).c_str(), textWidth);
-      renderer.drawText(SMALL_FONT_ID, textX, rowY + 36, subtitle.c_str(), !selected);
+      const int subtitleY = kCompact ? titleY + titleHeight : rowY + 36;
+      renderer.drawText(SMALL_FONT_ID, textX, subtitleY, subtitle.c_str(), !inverted);
     }
     if (!value.empty()) {
       const int valueX = contentRight - kRowPadding - renderer.getTextWidth(UI_10_FONT_ID, value.c_str());
       const int valueY = rowY + (kRowHeight - renderer.getLineHeight(UI_10_FONT_ID)) / 2;
-      renderer.drawText(UI_10_FONT_ID, valueX, valueY, value.c_str(), !selected);
+      renderer.drawText(UI_10_FONT_ID, valueX, valueY, value.c_str(), !inverted);
     }
     if (rowDimmed && rowDimmed(index) && !selected) {
       drawDitherMask(renderer, textX, rowY, std::max(0, contentRight - textX), kRowHeight - 1);
@@ -295,18 +395,19 @@ void InxTheme::drawButtonMenu(GfxRenderer& renderer, const Rect rect, const int 
   for (int index = pageStart; index < pageEnd; ++index) {
     const int rowY = rect.y + (index - pageStart) * kRowHeight;
     const bool selected = selectionVisible && index == selectedIndex;
-    if (selected) renderer.fillRect(rect.x, rowY, rect.width, kRowHeight, true);
+    if (selected) fillSelection(renderer, rect.x, rowY, rect.width, kRowHeight);
+    const bool inverted = selected && InxSelection::inverts;
 
     int textX = rect.x + kRowPadding;
     if (rowIcon) {
       const UIIcon icon = rowIcon(index);
       if (InxAppIcons::get(icon)) {
         const int iconY = rowY + (kRowHeight - kMenuIconSize) / 2;
-        InxAppIcons::draw(renderer, icon, textX, iconY, 1, selected);
+        InxAppIcons::draw(renderer, icon, textX, iconY, 1, inverted);
         textX += kMenuIconSize + kIconGap;
       } else if (const uint8_t* bitmap = iconForName(icon, kMenuIconSize)) {
         const int iconY = rowY + (kRowHeight - kMenuIconSize) / 2;
-        if (selected)
+        if (inverted)
           renderer.drawIconInverted(bitmap, textX, iconY, kMenuIconSize);
         else
           renderer.drawIcon(bitmap, textX, iconY, kMenuIconSize);
@@ -317,7 +418,7 @@ void InxTheme::drawButtonMenu(GfxRenderer& renderer, const Rect rect, const int 
     const std::string label = renderer.truncatedText(UI_12_FONT_ID, buttonLabel(index).c_str(),
                                                      std::max(1, rect.x + rect.width - kRowPadding - textX));
     const int textY = rowY + (kRowHeight - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
-    renderer.drawText(UI_12_FONT_ID, textX, textY, label.c_str(), !selected);
+    renderer.drawText(UI_12_FONT_ID, textX, textY, label.c_str(), !inverted);
     drawDottedSeparator(renderer, rect.x, rowY + kRowHeight - 1, rect.width);
   }
   drawSideScrollBar(renderer, rect, buttonCount, pageStart, pageItems);
@@ -330,7 +431,6 @@ void InxTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, c
   const int optionCount = static_cast<int>(options.size());
   const int selected = std::clamp(selectedIndex, 0, optionCount - 1);
   const int visibleRows = InxOptionGeometry::visibleRows(optionCount);
-  const int maxStart = optionCount - visibleRows;
   const int start = InxOptionGeometry::start(selected, optionCount);
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
@@ -351,23 +451,18 @@ void InxTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, c
     const int optionIndex = start + slot;
     const int rowY = panelY + InxOptionGeometry::headerHeight + slot * InxOptionGeometry::rowHeight;
     const bool isSelected = selectionVisible && optionIndex == selected;
-    if (isSelected) renderer.fillRect(panelX + 2, rowY, panelWidth - 4, InxOptionGeometry::rowHeight, true);
+    if (isSelected) fillSelection(renderer, panelX + 2, rowY, panelWidth - 4, InxOptionGeometry::rowHeight);
     const std::string option = renderer.truncatedText(UI_10_FONT_ID, options[optionIndex].c_str(), panelWidth - 44);
     const int textY = rowY + (InxOptionGeometry::rowHeight - renderer.getLineHeight(UI_10_FONT_ID)) / 2;
-    renderer.drawText(UI_10_FONT_ID, panelX + 18, textY, option.c_str(), !isSelected,
+    renderer.drawText(UI_10_FONT_ID, panelX + 18, textY, option.c_str(), !(isSelected && InxSelection::inverts),
                       isSelected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
     if (slot + 1 < visibleRows)
       drawDottedSeparator(renderer, panelX + 2, rowY + InxOptionGeometry::rowHeight - 1, panelWidth - 4);
   }
 
   if (optionCount > visibleRows) {
-    const int trackX = panelX + panelWidth - 10;
-    const int trackY = panelY + InxOptionGeometry::headerHeight;
-    const int trackHeight = visibleRows * InxOptionGeometry::rowHeight;
-    const int thumbHeight = std::max(8, trackHeight * visibleRows / optionCount);
-    const int thumbY = trackY + start * (trackHeight - thumbHeight) / maxStart;
-    renderer.fillRect(trackX, trackY, 2, trackHeight, true);
-    renderer.fillRect(trackX - 2, thumbY, 6, thumbHeight, true);
+    position_bar::drawVertical(renderer, panelX + panelWidth - 10, panelY + InxOptionGeometry::headerHeight,
+                               visibleRows * InxOptionGeometry::rowHeight, optionCount, visibleRows, start);
   }
 
   renderer.drawRect(panelX, panelY, panelWidth, panelHeight, true);
@@ -376,8 +471,11 @@ void InxTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, c
 
 void InxTheme::drawMainTabBar(const GfxRenderer& renderer, const Rect rect, const MainTab selected) const {
   renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
+  if constexpr (kCompact) drawStatusStrip(renderer, Rect{rect.x, rect.y, rect.width, kStripHeight});
   const int tabCount = static_cast<int>(MainTabs::values.size());
-  const int iconY = rect.y + std::max(0, (rect.height - kIconSize) / 2);
+  // Icons sit in the band below the status strip (strip height is 0 off UT37).
+  const int iconY = kCompact ? rect.y + rect.height - kUnderlineHeight - kTabIconGap - (kTabIconInkBottom + 1)
+                             : rect.y + std::max(0, (rect.height - kIconSize) / 2);
 
   for (size_t i = 0; i < MainTabs::values.size(); ++i) {
     const MainTab tab = MainTabs::values[i];

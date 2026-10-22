@@ -17,6 +17,19 @@ The startup guide and later UI-language changes apply the same rule.
 | Regional apps | WeRead and Chinese Chess are compiled once and exposed only for the China content profile. |
 | Services | China uses `crossmux.cn`, OTA variant `cn`, and China NTP servers; Global uses `crossmux.com`, variant `global`, and international NTP servers. Initial onboarding alone sets the default UTC offset. |
 
+**Traditional Chinese (`ZH_TW`, `traditional.yaml`)** is compiled into every
+build but offered only on UT37, whose built-in 1-bit WenQuanYi UI faces cover
+Traditional glyphs: `I18n::isLanguageAvailable()` limits UT37 to EN, ZH_CN and
+ZH_TW, and hides ZH_TW on other boards (their CJK UI subset is Simplified-only).
+The language picker lists only available languages, and a saved language that
+is unavailable falls back to English on load. ZH_TW uses the Global content
+profile, defaults to UTC+8 on first setup like ZH_CN, and gets the Chinese web
+UI. `cpfont_to_builtin.py` adds every CJK character from `chinese.yaml` and
+`traditional.yaml` to every UT37 WenQuanYi face, so regenerate those fonts after
+adding Chinese UI strings. The 10/12/14 px UI faces otherwise carry only the
+2000 most frequent Traditional + Simplified characters (`wqy_ui_chars.txt`);
+rarer characters in titles and file names come from the SD-card UI font.
+
 **Flash budget** (default `partitions.csv`, dual A/B app slot = 6.25 MB):
 
 | `gh_release` measurement (2026-09-17) | Image bytes | Slot headroom | Static RAM |

@@ -45,5 +45,4 @@ class XtcReaderActivity final : public ReaderActivity {
   bool isAtEndOfBook() const override;
   void onReturnFromEndOfBook() override;
 
-  ScreenshotInfo getScreenshotInfo() const override;
 };

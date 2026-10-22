@@ -175,6 +175,56 @@ bool isSettingAvailableForPersistence(const SettingInfo& setting) {
 
 }  // namespace
 
+bool CrossPointSettings::enforceBoardTheme() {
+#if FREEINK_DEVICE_UT37
+  // Only the Inx theme is laid out for UT37's 240x416 panel; the others place
+  // their home menu below the screen. Returns true when the value changed.
+  if (uiTheme != INX) {
+    uiTheme = INX;
+    return true;
+  }
+#endif
+  return false;
+}
+
+bool CrossPointSettings::enforceBoardSettings() {
+#if FREEINK_DEVICE_UT37
+  bool changed = false;
+  const auto pin = [&changed](uint8_t& field, const uint8_t value) {
+    if (field != value) {
+      field = value;
+      changed = true;
+    }
+  };
+  // Rows removed from UT37 Settings keep one fixed behaviour.
+  pin(sleepScreenCoverFilter, NO_FILTER);
+  pin(quickResumeSleepScreen, QUICK_RESUME_NEVER);
+  pin(hideBatteryPercentage, HIDE_NEVER);
+  pin(inxLibraryLayout, static_cast<uint8_t>(InxItemLayout::List));
+  pin(readerMenuStyle, READER_MENU_LIST);
+  pin(touchReaderControls, TOUCH_READER_ON);
+  pin(statusBarProgressBarThickness, PROGRESS_BAR_THIN);
+  if (orientation == INVERTED) pin(orientation, PORTRAIT);
+  // Option lists trimmed on UT37: fall back to the default when the stored
+  // value is no longer offered.
+  if (sleepScreen != DARK && sleepScreen != LIGHT && sleepScreen != COVER && sleepScreen != CUSTOM &&
+      sleepScreen != CLOCK) {
+    pin(sleepScreen, DARK);
+  }
+  // Standby is replaced by the Clock sleep screen on UT37.
+  pin(standbyShortcutEnabled, 0);
+  if (imageRendering == IMAGES_PLACEHOLDER) pin(imageRendering, IMAGES_SUPPRESS);
+  if (refreshFrequency != REFRESH_12 && refreshFrequency != REFRESH_24 && refreshFrequency != REFRESH_36 &&
+      refreshFrequency != REFRESH_NEVER) {
+    pin(refreshFrequency, REFRESH_12);
+  }
+  if (inxRecentLayout != 0 && inxRecentLayout != 1 && inxRecentLayout != 3) pin(inxRecentLayout, 0);
+  return changed;
+#else
+  return false;
+#endif
+}
+
 void CrossPointSettings::applyLanguageSelection(const uint8_t languageIndex) {
   language = languageIndex;
   contentProfile = contentProfileForLanguage(static_cast<Language>(languageIndex));
@@ -245,6 +295,10 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["frontButtonLeft"] = frontButtonLeft;
   doc["frontButtonRight"] = frontButtonRight;
   doc["bluetoothEnabled"] = bluetoothEnabled;
+  {
+    JsonArray zones = doc["touchLongPress"].to<JsonArray>();
+    for (const uint8_t action : touchLongPress) zones.add(action);
+  }
   JsonArray storedBleMap = doc["bleKeyMap"].to<JsonArray>();
   for (const auto& entry : bleKeyMap) {
     if (bleinput::isEmpty(entry)) continue;
@@ -256,7 +310,6 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // Apps use stable IDs beyond the uint8_t-only SettingsList, so persist the mask manually.
   doc["hiddenAppsMask"] = hiddenAppsMask;
   doc["appsCatalogVersion"] = appsCatalogVersion;
-  doc["buddyClaimed"] = buddyClaimed;
   // Font family and size — both use dynamic getter/setters in SettingsList (the
   // option lists depend on the SD font registry), so the generic loop skips them.
   doc["fontFamily"] = fontFamily;
@@ -277,15 +330,12 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
   doc["contentProfile"] = static_cast<uint8_t>(contentProfile);
   doc["onboardingVersion"] = onboardingVersion;
+#if FREEINK_DEVICE_UT37
+  doc["ut37KeyBack"] = 1;  // see the shortPwrBtn migration in fromJson()
+#endif
   // Keep the legacy marker current so rollback to a split-SKU firmware retains
   // the selected service region.
   doc["langSku"] = contentProfile == ContentProfile::China ? "cn" : "global";
-
-  // A uint16_t mask, so it does not fit the uint8_t generic loop. Omitted while
-  // unconfigured, so the default keeps following the UI language.
-  if (keyboardLayouts != 0) {
-    doc["keyboardLayouts"] = keyboardLayouts;
-  }
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
@@ -391,6 +441,15 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     sleepTimeoutMinutes = sleepTimeoutEnumToMinutes(legacyValue);
     needsResave = true;
   }
+#if FREEINK_DEVICE_UT37
+  // One-time: the function key's short press used to default to None. Saves
+  // still on that default move to Back (the new default); saves written after
+  // this carry the marker, so a later explicit "None" choice is kept.
+  if (doc["ut37KeyBack"].isNull()) {
+    if (shortPwrBtn == IGNORE) shortPwrBtn = KEY_BACK;
+    needsResave = true;
+  }
+#endif
   // Front button remap — managed by RemapFrontButtons sub-activity, not in SettingsList.
   frontButtonBack = clamp(doc["frontButtonBack"] | (uint8_t)FRONT_HW_BACK, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_BACK);
   frontButtonConfirm =
@@ -400,6 +459,16 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       clamp(doc["frontButtonRight"] | (uint8_t)FRONT_HW_RIGHT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
   validateFrontButtonMapping(s);
   bluetoothEnabled = clamp(doc["bluetoothEnabled"] | static_cast<uint8_t>(0), static_cast<uint8_t>(2), 0);
+  {
+    // Absent (older saves) keeps the struct defaults; bad entries fall back to None.
+    const JsonArrayConst zones = doc["touchLongPress"];
+    if (!zones.isNull()) {
+      for (int i = 0; i < TOUCH_LONG_PRESS_ZONES; ++i) {
+        touchLongPress[i] = clamp(zones[i] | static_cast<uint8_t>(TLP_NONE),
+                                  static_cast<uint8_t>(TOUCH_LONG_PRESS_ACTION_COUNT), TLP_NONE);
+      }
+    }
+  }
   bleKeyMap = {};
   const JsonArrayConst storedBleMap = doc["bleKeyMap"];
   if (!storedBleMap.isNull()) {
@@ -417,7 +486,6 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     needsResave = true;
   }
   appsCatalogVersion = APPS_CATALOG_VERSION;
-  buddyClaimed = clamp(doc["buddyClaimed"] | static_cast<uint8_t>(0), static_cast<uint8_t>(2), static_cast<uint8_t>(0));
 
   // Reader font size — an actual point size since 1.5. Files written by 1.4 and
   // earlier hold the old SMALL/MEDIUM/LARGE/EXTRA_LARGE slot in 0..3; no font is
@@ -488,10 +556,8 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   }
   onboardingVersion = doc["onboardingVersion"].is<uint8_t>() ? doc["onboardingVersion"].as<uint8_t>() : 0;
 
-  // Absent means unconfigured, which is the default.
-  if (doc["keyboardLayouts"].is<uint16_t>()) {
-    keyboardLayouts = doc["keyboardLayouts"].as<uint16_t>();
-  }
+  if (enforceBoardTheme()) needsResave = true;
+  if (enforceBoardSettings()) needsResave = true;
 
   if (needsResave) {
     LOG_DBG("CPS", "Resaving settings to update format");
@@ -616,6 +682,7 @@ bool CrossPointSettings::loadFromBinaryFile() {
   hyphenationEnabled = value(18, hyphenationEnabled);
   sleepScreenCoverFilter = validated(19, sleepScreenCoverFilter, SLEEP_SCREEN_COVER_FILTER_COUNT);
   uiTheme = value(20, uiTheme);
+  enforceBoardTheme();
   frontButtonBack = validated(21, frontButtonBack, FRONT_BUTTON_HARDWARE_COUNT);
   frontButtonConfirm = validated(22, frontButtonConfirm, FRONT_BUTTON_HARDWARE_COUNT);
   frontButtonLeft = validated(23, frontButtonLeft, FRONT_BUTTON_HARDWARE_COUNT);
@@ -640,15 +707,30 @@ CrossPointSettings::StatusBarSpec CrossPointSettings::statusBarSpec() const {
   spec.showChapterPageCount = statusBarChapterPageCount != 0;
   spec.showBookProgressPercent = statusBarBookProgressPercentage != 0;
   spec.titleMode = statusBarTitle;
+#if FREEINK_DEVICE_UT37
+  spec.showBattery = true;  // UT37: battery always shown, like the clock strip
+#else
   spec.showBattery = statusBarBattery != 0;
+#endif
   spec.showBatteryPercent = hideBatteryPercentage == HIDE_NEVER;
   spec.clockMode = statusBarClock;
   spec.clock12h = clockFormat == 1;
   spec.clockUtcOffsetQ = clockUtcOffsetQ;
   spec.progressBarMode = statusBarProgressBar;
+#if FREEINK_DEVICE_UT37
+  // UT37 has no thickness option: always the thin bar.
+  spec.progressBarHeightPx =
+      statusBarProgressBar != HIDE_PROGRESS ? static_cast<uint8_t>((PROGRESS_BAR_THIN + 1) * 2) : 0;
+#else
   spec.progressBarHeightPx =
       statusBarProgressBar != HIDE_PROGRESS ? static_cast<uint8_t>((statusBarProgressBarThickness + 1) * 2) : 0;
+#endif
+#if FREEINK_DEVICE_UT37
+  // UT37 drops the XTC status bar overlay entirely.
+  spec.xtcMode = XTC_STATUS_BAR_HIDE;
+#else
   spec.xtcMode = xtcStatusBarMode;
+#endif
   return spec;
 }
 
@@ -720,19 +802,7 @@ unsigned long CrossPointSettings::getSleepTimeoutMs() const {
   return static_cast<unsigned long>(minutes) * 60UL * 1000UL;
 }
 
-uint64_t CrossPointSettings::getDailyGoalMs() const {
-  switch (dailyGoalTarget) {
-    case DAILY_GOAL_15_MIN:
-      return 15ULL * 60ULL * 1000ULL;
-    case DAILY_GOAL_30_MIN:
-    default:
-      return 30ULL * 60ULL * 1000ULL;
-    case DAILY_GOAL_45_MIN:
-      return 45ULL * 60ULL * 1000ULL;
-    case DAILY_GOAL_60_MIN:
-      return 60ULL * 60ULL * 1000ULL;
-  }
-}
+uint64_t CrossPointSettings::getDailyGoalMs() const { return 60ULL * 1000ULL; }
 
 int CrossPointSettings::getRefreshFrequency() const {
   switch (refreshFrequency) {
@@ -747,6 +817,12 @@ int CrossPointSettings::getRefreshFrequency() const {
       return 15;
     case REFRESH_30:
       return 30;
+    case REFRESH_12:
+      return 12;
+    case REFRESH_24:
+      return 24;
+    case REFRESH_36:
+      return 36;
     case REFRESH_NEVER:
       // Effectively disables the periodic full refresh; the page counter
       // counts down from here and never reaches the threshold in practice.

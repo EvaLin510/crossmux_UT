@@ -12,6 +12,7 @@
 #include "components/UIThemeTokens.h"
 #include "components/icons/customListIcons.h"
 #include "components/icons/listIcons.h"
+#include "components/icons/listIcons16Sdk.h"
 
 // Shared glue for activities hosting a FreeInkApp: the font-bound render
 // target and the touch snapshot FreeInkApp routing consumes.
@@ -106,6 +107,23 @@ inline freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size = 24
         return {};
     }
   }
+#if FREEINK_DEVICE_UT37
+  // UT37 single-line rows: the 1 px hand-drawn 16 px set (two thirds of 24).
+  switch (icon) {
+    case UIIcon::Folder:
+      return freeink::ui::bitmapFromIcon(icon_folder_16);
+    case UIIcon::Text:
+      return freeink::ui::bitmapFromIcon(icon_text_16);
+    case UIIcon::Image:
+      return freeink::ui::bitmapFromIcon(icon_image_16);
+    case UIIcon::Book:
+      return freeink::ui::bitmapFromIcon(icon_book_16);
+    case UIIcon::File:
+      return freeink::ui::bitmapFromIcon(icon_file_16);
+    default:
+      break;
+  }
+#endif
   switch (icon) {
     case UIIcon::Folder:
       return freeink::ui::bitmapFromIcon(icon_folder_24);

@@ -24,17 +24,16 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "util/PaginationDots.h"
 #include "util/TimeUtils.h"
-#ifdef ENABLE_CHINESE_VERSION
-#include "ChineseCalendarFace.h"
-#endif
-#include "SloppyClockFace.h"
+#include "DeskClockFace.h"
 #include "StandbyTime.h"
 #include "WifiCredentialStore.h"
+#include "components/StatusStrip.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 namespace {
 
+constexpr auto kStandbyOrientation = GfxRenderer::Orientation::LandscapeCounterClockwise;
 constexpr uint32_t kWifiTimeoutMs = 15000u;  // Same as WifiSelectionActivity
 constexpr uint32_t kNtpTimeoutMs = 12000u;
 constexpr uint32_t kSyncDelayMs = 1500u;
@@ -52,12 +51,8 @@ struct FaceEntry {
   bool (*isAvailable)(int sw, int sh);
 };
 constexpr FaceEntry kFaces[] = {
-    {[]() -> std::unique_ptr<StandbyFace> { return makeUniqueNoThrow<SloppyClockFace>(); },
+    {[]() -> std::unique_ptr<StandbyFace> { return makeUniqueNoThrow<DeskClockFace>(); },
      [](int, int) { return true; }},
-#ifdef ENABLE_CHINESE_VERSION
-    {[]() -> std::unique_ptr<StandbyFace> { return makeUniqueNoThrow<ChineseCalendarFace>(); },
-     [](int sw, int sh) { return sh > sw; }},  // portrait only
-#endif
 };
 constexpr uint8_t kFaceCount = static_cast<uint8_t>(sizeof(kFaces) / sizeof(kFaces[0]));
 
@@ -71,7 +66,7 @@ uint8_t countAvailableFaces(int sw, int sh) {
 
 // Map a "rank among available faces" (0-based) back to a kFaces[] index.
 // Returns kFaceCount if none match (only happens when no face is available,
-// which can't currently occur since SloppyClockFace is always available).
+// which can't currently occur since DeskClockFace is always available).
 uint8_t availableFaceIndexFromRank(int sw, int sh, uint8_t rank) {
   uint8_t seen = 0;
   for (uint8_t i = 0; i < kFaceCount; ++i) {
@@ -112,8 +107,10 @@ void drawFaceDots(const GfxRenderer& renderer, int sw, int sh, uint8_t total, ui
 
 void StandbyActivity::onEnter() {
   Activity::onEnter();
+  savedOrientation_ = renderer.getOrientation();
+  renderer.setOrientation(kStandbyOrientation);
   LOG_DBG("STANDBY", "onEnter free heap=%u", static_cast<unsigned>(ESP.getFreeHeap()));
-  // Always default to face 0 (Sloppy Clock). If face 0 is somehow unavailable
+  // Always default to face 0 (desk clock). If face 0 is somehow unavailable
   // (currently impossible), fall back to the first available index.
   faceIndex_ = 0;
   if (!kFaces[0].isAvailable(renderer.getScreenWidth(), renderer.getScreenHeight())) {
@@ -152,6 +149,7 @@ void StandbyActivity::onExit() {
     currentFace_->onExit();
     currentFace_.reset();
   }
+  renderer.setOrientation(savedOrientation_);
   LOG_DBG("STANDBY", "onExit free heap=%u", static_cast<unsigned>(ESP.getFreeHeap()));
   Activity::onExit();
 }
@@ -468,8 +466,7 @@ void StandbyActivity::loop() {
   }
 
   // Up/Down: page navigation, dispatched to the current face.
-  //   - SloppyClock: each press rerolls the style (treated as a shake).
-  //   - ChineseCalendar: Up = previous day, Down = next day.
+  //   (The desk clock has no pages and ignores them.)
   // Pressing either button from Immersive wakes back to Normal first.
   const bool upPressed = mappedInput.wasReleased(MappedInputManager::Button::Up);
   const bool downPressed = mappedInput.wasReleased(MappedInputManager::Button::Down);
@@ -540,6 +537,8 @@ void StandbyActivity::loop() {
 
 void StandbyActivity::render(RenderLock&&) {
   if (!currentFace_) return;
+  // Re-assert each frame: the WiFi picker pushed from here may change it.
+  renderer.setOrientation(kStandbyOrientation);
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int sw = renderer.getScreenWidth();
@@ -570,7 +569,7 @@ void StandbyActivity::render(RenderLock&&) {
   if (mode_ != DisplayMode::Normal) {
     if (inverseMode_) renderer.invertScreen();
     renderer.displayBuffer();
-    // Opt-in faces (老黄历) get a 4-level gray LUT enhancement layered on the BW
+    // Opt-in faces get a 4-level gray LUT enhancement layered on the BW
     // image. Only fires in Immersive — Normal-mode navigation needs the
     // ~300-500ms FAST_REFRESH and can't afford the ~2s gray LUT. inverseMode_
     // short-circuits because invertScreen is BW-only and mixes poorly with gray.
@@ -584,12 +583,8 @@ void StandbyActivity::render(RenderLock&&) {
     UITheme::drawCenteredText(renderer, faceViewport, SMALL_FONT_ID, overlayTop,
                               I18n::getInstance().get(currentFace_->titleId()));
   }
-
-  // Top-right battery icon (no percentage text). Reuses BaseTheme::drawBatteryRight.
-  constexpr int kBatW = 16;
-  constexpr int kBatH = 12;
-  GUI.drawBatteryRight(renderer, Rect{sw - viewRight - kBatW - metrics.contentSidePadding, overlayTop, kBatW, kBatH},
-                       /*showPercentage=*/false);
+  // Clock and battery at the same spot as every other screen.
+  status_strip::draw(renderer, overlayTop, faceViewport.x, faceViewport.x + faceViewport.width);
 
   const uint8_t availFaces = countAvailableFaces(sw, sh);
   const uint8_t curRank = rankOfAvailableFace(sw, sh, faceIndex_);

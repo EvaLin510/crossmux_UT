@@ -88,6 +88,10 @@ bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint
       // Side buttons remain fixed for Up/Down.
       return (gpio.*fn)(HalGPIO::BTN_DOWN);
     case Button::Power:
+#if FREEINK_DEVICE_UT37
+      // A release that ends a long press belongs to the long-press action.
+      if (fn == &HalGPIO::wasReleased && gpio.getPowerButtonHeldTime() >= FUNCTION_KEY_LONG_PRESS_MS) return false;
+#endif
       // Power button bypasses remapping.
       return (gpio.*fn)(HalGPIO::BTN_POWER);
     case Button::PageBack:
@@ -395,30 +399,52 @@ MappedInputManager::SwipeDir MappedInputManager::wasSwipe() const {
 // Edge classification (which swipe counts as an edge gesture) lives in the
 // SDK; only the MEANING of each edge — back, menu, home, light panel, and the
 // home-key remap — is decided here.
-bool MappedInputManager::wasEdgeSwipe(const freeink::ui::ScreenEdge edge) const {
+bool MappedInputManager::wasEdgeSwipe(const freeink::ui::ScreenEdge edge, const float edgeFrac) const {
   int sx = 0;
   int sy = 0;
   int ex = 0;
   int ey = 0;
   if (!decodeSwipe(sx, sy, ex, ey)) return false;
-  const bool hit = fui::edgeSwipe(edge, sx, sy, ex, ey, renderer.getScreenWidth(), renderer.getScreenHeight());
+  const bool hit =
+      fui::edgeSwipe(edge, sx, sy, ex, ey, renderer.getScreenWidth(), renderer.getScreenHeight(), edgeFrac);
   if (hit) rememberTouchHeldTime();
   return hit;
 }
 
 bool MappedInputManager::wasBackGesture() const {
   // Keep mid-screen horizontal swipes available to the active Activity.
+#if FREEINK_DEVICE_UT37
+  // One edge band everywhere on UT37, readers included (see
+  // wasReaderEdgeBackGesture): a swipe that starts at the very left edge,
+  // from the bezel inward, so right swipes started mid-page still page back.
+  constexpr float kUt37BackEdgeFrac = 0.12f;
+  return wasEdgeSwipe(fui::ScreenEdge::Left, kUt37BackEdgeFrac);
+#else
   return wasEdgeSwipe(fui::ScreenEdge::Left);
+#endif
+}
+
+bool MappedInputManager::wasReaderEdgeBackGesture() const {
+#if FREEINK_DEVICE_UT37
+  return wasBackGesture();
+#else
+  return false;
+#endif
 }
 
 bool MappedInputManager::wasHeaderTapBack() const {
-#if !FREEINK_DEVICE_EEGO_A4
+#if !FREEINK_DEVICE_EEGO_A4 && !FREEINK_DEVICE_UT37
   return false;
 #else
   // Tap on the header (title bar) acts as Return on touch-only devices that
-  // lack a dedicated front Back key (eego-a4). The header occupies
+  // lack a dedicated front Back key (eego-a4, UT37). The header occupies
   // [topPadding, topPadding + headerHeight); tapping it pops the activity.
   if (!gpio.hasTouch()) return false;
+#if FREEINK_DEVICE_UT37
+  // UT37 has no Home key to leave a book, and its reader turns pages on
+  // top-row taps, so the reading surface keeps those taps as page turns.
+  if (!headerTapBackAllowed) return false;
+#endif
   int x = 0;
   int y = 0;
   if (!wasScreenTapped(x, y)) return false;
@@ -463,10 +489,21 @@ bool MappedInputManager::wasPowerConfirmClick() const {
 }
 #endif
 
+#if FREEINK_DEVICE_UT37
+bool MappedInputManager::wasFunctionKeyBack() const {
+  // Short release of the function key when it is set to Back. The release that
+  // ends a long press is already swallowed by the Power mapping.
+  return SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::KEY_BACK &&
+         mapButton(Button::Power, &HalGPIO::wasReleased);
+}
+#endif
+
 bool MappedInputManager::wasPressed(const Button button) const {
   if (button == Button::Back && wasBackGesture()) return true;
 #if FREEINK_DEVICE_EEGO_A4
   if (button == Button::Back && (gpio.wasHomeKeyTapped() || wasHeaderTapBack())) return true;
+#elif FREEINK_DEVICE_UT37
+  if (button == Button::Back && (wasHeaderTapBack() || wasFunctionKeyBack())) return true;
 #endif
 #if FREEINK_CAP_TOUCH
   if (button == Button::Confirm && wasPowerConfirmClick()) return true;
@@ -478,6 +515,8 @@ bool MappedInputManager::wasReleased(const Button button) const {
   if (button == Button::Back && wasBackGesture()) return true;
 #if FREEINK_DEVICE_EEGO_A4
   if (button == Button::Back && (gpio.wasHomeKeyTapped() || wasHeaderTapBack())) return true;
+#elif FREEINK_DEVICE_UT37
+  if (button == Button::Back && (wasHeaderTapBack() || wasFunctionKeyBack())) return true;
 #endif
 #if FREEINK_CAP_TOUCH
   if (button == Button::Confirm && wasPowerConfirmClick()) return true;

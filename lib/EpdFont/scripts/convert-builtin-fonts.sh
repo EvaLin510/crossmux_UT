@@ -28,8 +28,6 @@ for size in ${NOTOSANS_FONT_SIZES[@]}; do
   done
 done
 
-PYTHON=python bash build-calculator-fonts.sh
-
 UI_FONT_SIZES=(10 12)
 # Medium, not Regular, is the UI text weight: 1-bit rasterisation at these sizes
 # snaps stems to whole pixels, and Regular lands on 2px where Medium lands on 3.
@@ -98,31 +96,6 @@ python fontconvert.py notosans_8_regular 8 \
   ../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-Regular.ttf \
   ../builtinFonts/source/NotoSansArabic/NotoSansArabic-Regular.ttf \
   --additional-intervals 0x05D0,0x05EA "${ARABIC_INTERVALS[@]}" > ../builtinFonts/notosans_8_regular.h
-
-# Chinese chess piece characters: 仕 俥 馬 兵 卒 士 将 帅 炮 相 砲 象 车 马
-# Source font is provided as a pre-subset TTF containing only those 14 glyphs
-# plus '|' (U+007C), which fontconvert.py uses as a descender heuristic.
-if [ -f ../builtinFonts/source/ChineseChess/ChineseChess.ttf ]; then
-  python fontconvert.py chinese_chess_16 16 ../builtinFonts/source/ChineseChess/ChineseChess.ttf --2bit --compress \
-    --additional-intervals 0x4ED5,0x4ED5 \
-    --additional-intervals 0x4FE5,0x4FE5 \
-    --additional-intervals 0x99AC,0x99AC \
-    --additional-intervals 0x5175,0x5175 \
-    --additional-intervals 0x5352,0x5352 \
-    --additional-intervals 0x58EB,0x58EB \
-    --additional-intervals 0x5C06,0x5C06 \
-    --additional-intervals 0x5E05,0x5E05 \
-    --additional-intervals 0x70AE,0x70AE \
-    --additional-intervals 0x76F8,0x76F8 \
-    --additional-intervals 0x7832,0x7832 \
-    --additional-intervals 0x8C61,0x8C61 \
-    --additional-intervals 0x8F66,0x8F66 \
-    --additional-intervals 0x9A6C,0x9A6C \
-    > ../builtinFonts/chinese_chess_16.h
-  echo "Generated ../builtinFonts/chinese_chess_16.h"
-else
-  echo "Skipping chinese_chess_16: ChineseChess.ttf source not present"
-fi
 
 echo ""
 echo "Running compression verification..."

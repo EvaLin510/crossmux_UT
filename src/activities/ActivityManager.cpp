@@ -12,27 +12,14 @@
 
 #include "CrossPointSettings.h"
 #include "OpdsServerStore.h"
-#include "apps/2048/Game2048Activity.h"
 #include "apps/AppsMenuActivity.h"
 #include "apps/airpage/AirPageActivity.h"
-#include "apps/avatar/UglyAvatarActivity.h"
-#include "apps/buddy/BuddyActivity.h"
-#include "apps/calculator/CalculatorActivity.h"
-#include "apps/sokoban/SokobanGameActivity.h"
-#ifdef ENABLE_CHINESE_VERSION
-#include "apps/chinese-chess/ChineseChessMenuActivity.h"
-#endif
 #ifdef ENABLE_CHINESE_VERSION
 #include "apps/weread/WeReadActivity.h"
 #endif
-#include "apps/gomoku/GomokuMenuActivity.h"
-#include "apps/minesweeper/MinesweeperMenuActivity.h"
-#include "apps/pixel-switch/PixelSwitchActivity.h"
 #include "apps/reading-stats/ReadingStatsActivity.h"
 #include "apps/reading-stats/ReadingStatsMenuActivity.h"
 #include "apps/standby/StandbyActivity.h"
-#include "apps/sudoku/SudokuMenuActivity.h"
-#include "apps/woodfish/WoodfishActivity.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
@@ -113,6 +100,7 @@ void ActivityManager::renderTaskLoop() {
 
 void ActivityManager::loop() {
   if (mappedInput.consumeSuppressedRelease()) return;
+  mappedInput.setHeaderTapBackAllowed(!currentActivity || !currentActivity->isReaderActivity());
 
   if (currentActivity && currentActivity->requiresExclusiveStorageLoop()) {
     currentActivity->loop();
@@ -394,11 +382,16 @@ void ActivityManager::goToUsbDrive() {
 
 void ActivityManager::goToSettings() { replaceActivityWith<SettingsActivity>(); }
 
-void ActivityManager::goToUglyAvatar() { replaceActivityWith<UglyAvatarActivity>(); }
-
 void ActivityManager::goToFileBrowser(std::string path) { replaceActivityWith<FileBrowserActivity>(std::move(path)); }
 
-void ActivityManager::goToRecentBooks() { replaceActivityWith<RecentBooksActivity>(); }
+void ActivityManager::goToRecentBooks() {
+#if FREEINK_DEVICE_UT37
+  // Only the generic Home menu opens RecentBooks; UT37 uses the Inx Recent tab.
+  goToInxRecent();
+#else
+  replaceActivityWith<RecentBooksActivity>();
+#endif
+}
 
 void ActivityManager::goToInxRecent() { replaceActivityWith<InxRecentActivity>(); }
 
@@ -440,7 +433,7 @@ void ActivityManager::goToReader(std::string path, const bool allowFastInitialRe
     goToFileBrowser("/");
     return;
   }
-  if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path)) {
+  if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path) || FsHelpers::hasJpgExtension(path)) {
     replaceActivityWith<ImageViewerActivity>(std::move(path));
     return;
   }
@@ -465,12 +458,20 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
 }
 
 void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
-  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::INX) {
+  // UT37 is locked to Inx, so the generic HomeActivity (laid out for larger
+  // panels) is never instantiated and stays out of its image.
+#if FREEINK_DEVICE_UT37
+  constexpr bool kInxOnly = true;
+#else
+  constexpr bool kInxOnly = false;
+#endif
+  if (kInxOnly || SETTINGS.uiTheme == CrossPointSettings::UI_THEME::INX) {
     mainTabFocus = MainTabFocus::Tabs;
     mainTabEntryReleasePending = false;
     goToInxRecent();
     return;
   }
+#if !FREEINK_DEVICE_UT37
   if (initialMenuItem == HomeMenuItem::NONE && currentActivity) {
     const auto& activityName = currentActivity->name;
     if (activityName == "FileBrowser") {
@@ -486,6 +487,9 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
     }
   }
   replaceActivityWith<HomeActivity>(initialMenuItem);
+#else
+  (void)initialMenuItem;
+#endif
 }
 void ActivityManager::goToCrashReport() { replaceActivityWith<CrashActivity>(); }
 
@@ -495,31 +499,10 @@ void ActivityManager::goToReadingStatsMenu() { replaceActivityWith<ReadingStatsM
 
 void ActivityManager::goToReadingStats() { replaceActivityWith<ReadingStatsActivity>(true); }
 
-void ActivityManager::goToSudoku() { replaceActivityWith<SudokuMenuActivity>(); }
-
-void ActivityManager::goToSokoban() { replaceActivityWith<SokobanGameActivity>(); }
-
-void ActivityManager::goToGomoku() { replaceActivityWith<GomokuMenuActivity>(); }
-
-void ActivityManager::goToMinesweeper() { replaceActivityWith<MinesweeperMenuActivity>(); }
-
-void ActivityManager::goToPixelSwitch() { replaceActivityWith<PixelSwitchActivity>(); }
-
-void ActivityManager::goToCalculator() { replaceActivityWith<CalculatorActivity>(); }
-
-void ActivityManager::goToWoodfish() { replaceActivityWith<WoodfishActivity>(); }
-
-void ActivityManager::goToGame2048() { replaceActivityWith<Game2048Activity>(); }
 
 void ActivityManager::goToAirPage() { replaceActivityWith<AirPageActivity>(); }
 
-void ActivityManager::goToBuddy() { replaceActivityWith<BuddyActivity>(); }
-
 void ActivityManager::goToStandby() { replaceActivityWith<StandbyActivity>(); }
-
-#ifdef ENABLE_CHINESE_VERSION
-void ActivityManager::goToChineseChess() { replaceActivityWith<ChineseChessMenuActivity>(); }
-#endif
 
 #ifdef ENABLE_CHINESE_VERSION
 void ActivityManager::goToWeRead() { replaceActivityWith<WeReadActivity>(); }
@@ -571,13 +554,6 @@ bool ActivityManager::deferBluetoothStart() const {
 bool ActivityManager::handleForcedRefresh() { return currentActivity && currentActivity->handleForcedRefresh(); }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
-
-ScreenshotInfo ActivityManager::getScreenshotInfo() const {
-  if (currentActivity) {
-    return currentActivity->getScreenshotInfo();
-  }
-  return {};
-}
 
 void ActivityManager::requestUpdate(bool immediate) {
   if (immediate) {

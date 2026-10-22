@@ -20,6 +20,12 @@ enum class UsbDriveState : uint8_t {
   IoError,
 };
 
+enum class SdCardChange : uint8_t {
+  None,
+  Removed,
+  Reinserted,
+};
+
 class HalStorage {
  public:
   HalStorage();
@@ -31,6 +37,10 @@ class HalStorage {
   // stopped; open HalFiles become invalid. A deep-sleep wake resets the MCU and
   // mounts storage again through begin().
   void prepareForDeepSleep();
+  // SDMMC boards without a card-detect pin: probe the card (CMD13 while
+  // mounted, a light re-init after removal). Reinserted means a card is back
+  // but the old mount is stale; restart to remount. None on SPI boards.
+  SdCardChange pollCardChange();
   // USB Drive exclusively owns the SD card while active. Callers must stop
   // all filesystem work before beginUsbDrive(), then reboot after endUsbDrive().
   bool beginUsbDrive();

@@ -7,7 +7,7 @@
 
 class GfxRenderer;
 
-// Base class for a single Standby "face" (e.g. the random sloppy clock, a future
+// Base class for a single Standby "face" (e.g. the desk clock, a future
 // calendar, etc.). One Face is active at a time; StandbyActivity owns it via
 // unique_ptr and switches between faces in response to Left/Right input.
 //
@@ -27,15 +27,13 @@ class StandbyFace {
   // Release per-face state. Called when leaving (face switch or Standby exit).
   virtual void onExit() {}
 
-  // Side Up/Down "shake" gesture. Sloppy clock interprets this as "reroll the
-  // style"; other faces may ignore. The seed argument is fresh entropy combined
+  // Side Up/Down "shake" gesture; faces may ignore it. The seed argument is fresh entropy combined
   // with millis() so the face can re-randomize without seeding its own RNG.
   virtual void onShake(uint32_t /*seed*/) {}
 
   // Up / Down navigation. StandbyActivity dispatches Up→onPagePrev and
   // Down→onPageNext on the active face. Faces that don't paginate (e.g. the
-  // SloppyClock) override these to forward to `onShake` so the gesture still
-  // does something useful; faces that do paginate (e.g. the Chinese calendar)
+  // desk clock) may ignore them; faces that do paginate (e.g. a calendar)
   // override these to change their internal day/page offset.
   virtual void onPagePrev() {}
   virtual void onPageNext() {}
@@ -54,7 +52,7 @@ class StandbyFace {
   virtual StrId titleId() const = 0;
 
   // Seconds to sleep before the next timer-driven wake during light-sleep
-  // (Sleep mode). Sloppy clock returns "seconds to next minute boundary";
+  // (Sleep mode). The desk clock returns "seconds to next minute boundary";
   // a calendar face would return "seconds to next midnight".
   virtual uint32_t secondsUntilNextWake() const = 0;
 

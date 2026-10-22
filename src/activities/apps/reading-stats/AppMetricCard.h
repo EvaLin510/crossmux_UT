@@ -33,6 +33,10 @@ struct Options {
 void draw(const GfxRenderer& renderer, const Rect& rect, const char* label, const std::string& value,
           const Options& options = Options{});
 
+// The six-card overview (streaks, today, total time, books finished/started)
+// shared by the Statistics tab and its More details page; three rows of two.
+void drawSummaryGrid(const GfxRenderer& renderer, int left, int top, int cardWidth, int cardHeight, int gap);
+
 // Shared Statistics chrome. Theme selection stays here so leaf Activities only
 // describe their content and interaction.
 bool drawSelectablePanel(const GfxRenderer& renderer, const Rect& rect, bool selected, bool darkSelected = false,
