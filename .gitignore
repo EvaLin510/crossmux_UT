@@ -35,3 +35,6 @@ weread_apikey*.bin
 /dependencies.lock
 /sdkconfig.*
 flake.*
+
+# UT37 vendor hardware datasheets (reference only, 69 MB)
+/硬體資料- 图纸.刷新LUT和硬件分析/
