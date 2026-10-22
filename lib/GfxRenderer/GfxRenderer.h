@@ -15,6 +15,7 @@ enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 class FontCacheManager;
 class SdCardFont;
 
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -307,14 +308,38 @@ class GfxRenderer {
 
   // RAII guard for setClipRect()/clearClipRect(). Restores the clip on scope
   // exit (including early returns), so a forgotten clear can never silently
-  // clip a later frame or activity. Non-nesting: it clears on destruction
-  // rather than restoring a previous rect (sufficient for the flat use here).
+  // clip a later frame or activity. Nests: destruction restores the enclosing
+  // scope's rect. Clearing it instead let a cover's title clip drop the Flow
+  // carousel clip, and every off-panel pixel of the next cover then logged.
   struct ClipScope {
     const GfxRenderer& renderer;
-    ClipScope(const GfxRenderer& r, const int x, const int y, const int width, const int height) : renderer(r) {
+    const bool prevActive;
+    const int prevX0;
+    const int prevY0;
+    const int prevX1;
+    const int prevY1;
+    ClipScope(const GfxRenderer& r, const int x, const int y, const int width, const int height)
+        : renderer(r),
+          prevActive(r.clipActive),
+          prevX0(r.clipX0),
+          prevY0(r.clipY0),
+          prevX1(r.clipX1),
+          prevY1(r.clipY1) {
       renderer.setClipRect(x, y, width, height);
+      if (prevActive) {  // a nested clip never widens the enclosing one
+        renderer.clipX0 = std::max(renderer.clipX0, prevX0);
+        renderer.clipY0 = std::max(renderer.clipY0, prevY0);
+        renderer.clipX1 = std::min(renderer.clipX1, prevX1);
+        renderer.clipY1 = std::min(renderer.clipY1, prevY1);
+      }
     }
-    ~ClipScope() { renderer.clearClipRect(); }
+    ~ClipScope() {
+      renderer.clipX0 = prevX0;
+      renderer.clipY0 = prevY0;
+      renderer.clipX1 = prevX1;
+      renderer.clipY1 = prevY1;
+      renderer.clipActive = prevActive;
+    }
     ClipScope(const ClipScope&) = delete;
     ClipScope& operator=(const ClipScope&) = delete;
   };

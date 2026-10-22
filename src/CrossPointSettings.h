@@ -396,7 +396,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t hapticFeedbackLevel = HAPTIC_FEEDBACK_MEDIUM;
 #endif
   // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)
+#if FREEINK_DEVICE_UT37
+  uint8_t removeReadBooksFromRecents = 1;
+#else
   uint8_t removeReadBooksFromRecents = 0;
+#endif
   // Move epub to /Read/ folder on SD card when finished (0 = disabled, 1 = enabled)
   uint8_t moveFinishedToReadFolder = 0;
   // Short press Back goes to file browser instead of home (0 = disabled, 1 = enabled)
