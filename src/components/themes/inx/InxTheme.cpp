@@ -425,13 +425,14 @@ void InxTheme::drawButtonMenu(GfxRenderer& renderer, const Rect rect, const int 
 }
 
 void InxTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, const std::vector<std::string>& options,
-                               const int selectedIndex) const {
+                               const int selectedIndex, const int scrollStart) const {
   if (options.empty()) return;
 
   const int optionCount = static_cast<int>(options.size());
   const int selected = std::clamp(selectedIndex, 0, optionCount - 1);
   const int visibleRows = InxOptionGeometry::visibleRows(optionCount);
-  const int start = InxOptionGeometry::start(selected, optionCount);
+  const int start = scrollStart >= 0 ? InxOptionGeometry::clampStart(scrollStart, optionCount)
+                                     : InxOptionGeometry::start(selected, optionCount);
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
   const int panelWidth = std::max(1, std::min(screenWidth - 24, 360));

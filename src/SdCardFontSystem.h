@@ -22,6 +22,16 @@ class GfxRenderer;
 class SdCardFontSystem {
  public:
   static constexpr const char* COMPLETE_CHINESE_NOTO_SANS_FAMILY = "NotoSansSC";
+  // Family FontDownloadActivity installs (all sizes) when the reader hits a
+  // glyph the built-in Chinese subset lacks.
+  static constexpr const char* DOWNLOADABLE_CHINESE_FAMILY = "WQYZhengHei";
+  // SD family that is the complete version of the built-in reader face. When it
+  // is installed it replaces the built-in entry, so the font list shows one row.
+#if FREEINK_DEVICE_UT37
+  static constexpr const char* COMPLETE_BUILTIN_FAMILY = "WQYZhengHei";  // built-in = its 16 px subset
+#else
+  static constexpr const char* COMPLETE_BUILTIN_FAMILY = COMPLETE_CHINESE_NOTO_SANS_FAMILY;
+#endif
   // SD families tried, in order, as the bitmap UI face:
   // /.fonts/<name>/ or /fonts/<name>/ holding <any>_{10,12,14}.cpfont.
   static constexpr const char* SD_UI_FONT_FAMILIES[] = {"WQYZhengHei", "WenQuanDian"};
@@ -55,7 +65,8 @@ class SdCardFontSystem {
   void markRegistryDirty() { registryDirty_.store(true, std::memory_order_release); }
 
   /// Chinese builds replace the duplicate built-in reader face with the
-  /// complete SD-card Noto Sans family when it is installed.
+  /// complete SD-card family (COMPLETE_BUILTIN_FAMILY) when it is installed:
+  /// NotoSansSC under the China profile, or WQYZhengHei on UT37 in any language.
   /// Returns true when the saved selection changed.
   bool adoptCompleteChineseNotoSans();
 

@@ -2,9 +2,10 @@
 
 #include <cstdint>
 
-// Fixed frontlight dimming steps. UT37 offers ten steps between 4% and 20% of
-// the FrontlightManager perceptual percent scale; other boards keep the free
-// 1-100% range. Values are flash constants (constexpr), no RAM cost.
+// Fixed frontlight dimming steps. UT37 offers level 0 (dark) plus ten lit steps
+// between 4% and 20% of the FrontlightManager perceptual percent scale; other
+// boards keep the free 1-100% range. Values are flash constants (constexpr), no
+// RAM cost.
 namespace frontlight_levels {
 
 #if FREEINK_DEVICE_UT37
@@ -13,10 +14,13 @@ inline constexpr bool kStepped = true;
 inline constexpr bool kStepped = false;
 #endif
 
-inline constexpr uint8_t kPercents[] = {4, 6, 8, 9, 11, 13, 15, 16, 18, 20};
+// Index = the level shown to the user (0..10). 2% and below never lit the LED
+// (10-bit duty <= 2), so level 0 is an explicit 0% rather than a dead dim step.
+inline constexpr uint8_t kPercents[] = {0, 4, 6, 8, 9, 11, 13, 15, 16, 18, 20};
 inline constexpr int kCount = static_cast<int>(sizeof(kPercents) / sizeof(kPercents[0]));
-// First-ever brightness (fresh settings): the dimmest step.
-inline constexpr uint8_t kDefaultPercent = kPercents[0];
+inline constexpr int kMaxLevel = kCount - 1;
+// First-ever brightness (fresh settings): the dimmest lit step.
+inline constexpr uint8_t kDefaultPercent = kPercents[1];
 
 // Index of the step closest to `percent` (ties go to the dimmer step).
 constexpr int indexForPercent(const uint8_t percent) {
@@ -41,6 +45,7 @@ constexpr uint8_t normalize(const uint8_t percent) {
 }
 
 static_assert(indexForPercent(0) == 0 && indexForPercent(100) == kCount - 1, "out-of-range percents clamp to the ends");
-static_assert(indexForPercent(10) == 3 && indexForPercent(17) == 7, "ties resolve to the dimmer step");
+static_assert(indexForPercent(10) == 4 && indexForPercent(17) == 8, "ties resolve to the dimmer step");
+static_assert(indexForPercent(3) == 1, "a saved 3% (the previous floor) lands on level 1, not dark");
 
 }  // namespace frontlight_levels

@@ -70,6 +70,21 @@ class OptionPopup {
       }
       ignoreInitialTouchContact = false;
     }
+    if (UITheme::getInstance().hasMainTabs() && total > InxOptionGeometry::visibleRowLimit) {
+      // The INX popup shows visibleRowLimit rows: a vertical swipe pages the
+      // window by that many rows in one repaint, leaving the selection alone.
+      const auto swipe = input.wasSwipe();
+      if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
+        const int page = InxOptionGeometry::visibleRows(total);
+        const int next = InxOptionGeometry::clampStart(
+            scrollStart + (swipe == MappedInputManager::SwipeDir::Up ? page : -page), total);
+        if (next != scrollStart) {
+          scrollStart = next;
+          requestUpdate();
+        }
+        return true;
+      }
+    }
     if (snap.touchPressed || snap.touchReleased || snap.touchHeld) {
       // Interactions are registered on the render task; only route once the
       // first render after show() has populated the table (uiReady handshake).
@@ -94,28 +109,21 @@ class OptionPopup {
           requestUpdate();
           return true;
         }
-        if (snap.touchPressed) {
-          // Touch-down on an option moves the highlight (route() latched the
-          // hit as the active interaction; read it back, no re-hit-testing).
-          const int16_t idx = interactions.activeIndex();
-          if (idx >= 0) {
-            const freeink::ui::Interaction& hit = interactions.publishedData()[idx];
-            if (hit.action == ACTION_OPTION && selectedIndex != hit.value) {
-              selectedIndex = hit.value;
-              requestUpdate();
-            }
-          }
-        }
+        // Touch-down does not repaint: the release selects and closes the
+        // popup anyway, so a highlight frame would only cost one more e-ink
+        // refresh (~0.5 s) before the result shows.
       }
       return true;
     }
 
     if (input.wasPressed(MappedInputManager::Button::NavPrevious)) {
       selectedIndex = (selectedIndex - 1 + count) % count;
+      scrollStart = InxOptionGeometry::start(selectedIndex, total);
       requestUpdate();
       return true;
     } else if (input.wasPressed(MappedInputManager::Button::NavNext)) {
       selectedIndex = (selectedIndex + 1) % count;
+      scrollStart = InxOptionGeometry::start(selectedIndex, total);
       requestUpdate();
       return true;
     }
@@ -179,7 +187,7 @@ class OptionPopup {
     if (UITheme::getInstance().hasMainTabs()) {
       const int optionCount = static_cast<int>(ownedStrings.size());
       const int visibleRows = InxOptionGeometry::visibleRows(optionCount);
-      const int start = InxOptionGeometry::start(selectedIndex, optionCount);
+      const int start = InxOptionGeometry::clampStart(scrollStart, optionCount);
       const int panelWidth = std::max(1, std::min<int>(device.width - 24, 360));
       const int panelHeight = InxOptionGeometry::headerHeight + visibleRows * InxOptionGeometry::rowHeight;
       const int panelX = (device.width - panelWidth) / 2;
@@ -194,7 +202,7 @@ class OptionPopup {
                             static_cast<int16_t>(panelWidth - 4), InxOptionGeometry::rowHeight},
                   ACTION_OPTION, static_cast<int16_t>(start + slot), fui::InputTouch);
       }
-      GUI.drawOptionPopup(renderer, title.c_str(), ownedStrings, selectedIndex);
+      GUI.drawOptionPopup(renderer, title.c_str(), ownedStrings, selectedIndex, start);
       interactions.publish();
       uiReady = true;
       return;
@@ -282,6 +290,7 @@ class OptionPopup {
       return;
     }
     selectedIndex = std::clamp(currentIndex, 0, count - 1);
+    scrollStart = InxOptionGeometry::start(selectedIndex, count);
     onSelectCallback = std::move(onSelect);
     ignoreInitialConfirmRelease = true;
     ignoreInitialTouchContact = true;
@@ -301,6 +310,7 @@ class OptionPopup {
   std::string title;
   std::vector<std::string> ownedStrings;
   int selectedIndex = 0;
+  int scrollStart = 0;  // INX theme: first visible option row
   std::function<void(int)> onSelectCallback;
   bool ignoreInitialConfirmRelease = false;
   bool ignoreInitialTouchContact = false;

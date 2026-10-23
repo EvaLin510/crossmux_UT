@@ -165,18 +165,19 @@ void SdCardFontSystem::releaseLoadedFont(GfxRenderer& renderer) { manager_.unloa
 
 bool SdCardFontSystem::adoptCompleteChineseNotoSans() {
 #ifdef ENABLE_CHINESE_VERSION
-  if (SETTINGS.contentProfile != CrossPointSettings::ContentProfile::China || SETTINGS.sdFontFamilyName[0] != '\0' ||
-      !registry_.findFamily(COMPLETE_CHINESE_NOTO_SANS_FAMILY))
-    return false;
+#if !FREEINK_DEVICE_UT37
+  if (SETTINGS.contentProfile != CrossPointSettings::ContentProfile::China) return false;
+#endif
+  if (SETTINGS.sdFontFamilyName[0] != '\0' || !registry_.findFamily(COMPLETE_BUILTIN_FAMILY)) return false;
 
-  strncpy(SETTINGS.sdFontFamilyName, COMPLETE_CHINESE_NOTO_SANS_FAMILY, sizeof(SETTINGS.sdFontFamilyName) - 1);
+  strncpy(SETTINGS.sdFontFamilyName, COMPLETE_BUILTIN_FAMILY, sizeof(SETTINGS.sdFontFamilyName) - 1);
   SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
   SETTINGS.fontFamily = CrossPointSettings::NOTOSANS;
   SETTINGS.sdFontFlashPreload = 0;
   if (!SETTINGS.saveToFile()) {
-    LOG_ERR("SDFS", "Failed to save automatic NotoSansSC selection");
+    LOG_ERR("SDFS", "Failed to save automatic %s selection", COMPLETE_BUILTIN_FAMILY);
   }
-  LOG_INF("SDFS", "Using installed NotoSansSC in place of the Chinese built-in font");
+  LOG_INF("SDFS", "Using installed %s in place of the built-in font", COMPLETE_BUILTIN_FAMILY);
   return true;
 #else
   return false;

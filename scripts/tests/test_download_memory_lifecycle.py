@@ -84,9 +84,7 @@ struct OtaUpdateActivity : Activity {
   void onExit();
 };
 struct FontDownloadActivity : Activity {
-  enum class Purpose { Manage, ReaderAutoInstall };
   enum class ExitRoute { Home, Reader, ReaderSuppressPrompt, ReaderPreloadChineseFont };
-  Purpose purpose_ = Purpose::Manage;
   ExitRoute exitRoute_ = ExitRoute::Home;
   bool readingStatsReleased_ = false;
   unsigned targetPointSize_ = 16;
@@ -124,19 +122,15 @@ int main() {
       }
       ota.onExit(); // Cancel or allocation failure before Wi-Fi enabled.
       assert(restartRoute == (released ? 0 : -1));
-      for (int automatic = 0; automatic != 2; ++automatic) {
-        READING_STATS.releases = launches = 0; restartRoute = -1;
-        FontDownloadActivity font;
-        if (automatic) font.purpose_ = FontDownloadActivity::Purpose::ReaderAutoInstall;
-        font.startWifiSelection();
-        assert(font.readingStatsReleased_ == released);
-        assert(launches == entered && READING_STATS.releases == c3);
-        assert(font.finished == !entered);
-        if (!entered && automatic)
-          assert(font.exitRoute_ == FontDownloadActivity::ExitRoute::ReaderSuppressPrompt);
-        font.onExit();
-        assert(restartRoute == (released ? (automatic && !entered ? 2 : 0) : -1));
-      }
+      READING_STATS.releases = launches = 0; restartRoute = -1;
+      FontDownloadActivity font;
+      font.startWifiSelection();
+      assert(font.readingStatsReleased_ == released);
+      assert(launches == entered && READING_STATS.releases == c3);
+      assert(font.finished == !entered);
+      if (!entered) assert(font.exitRoute_ == FontDownloadActivity::ExitRoute::ReaderSuppressPrompt);
+      font.onExit();
+      assert(restartRoute == (released ? (!entered ? 2 : 0) : -1));
     }
   }
   // Retain all font return destinations, with Wi-Fi active or after an early cancel.

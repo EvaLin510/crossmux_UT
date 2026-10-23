@@ -51,8 +51,9 @@ constexpr int kTileCols = 2;
 constexpr int BRIGHTNESS_STEP = 1;
 // The dimmest setting is 1%, not 0: turning the light off is what the lamp
 // button next to the slider is for, so a 0% "on" level would only be a second,
-// worse way to reach the same place.
-constexpr uint8_t MIN_BRIGHTNESS = 1;
+// worse way to reach the same place. UT37 is the exception: its step table
+// starts with an explicit level 0 (0%).
+constexpr uint8_t MIN_BRIGHTNESS = frontlight_levels::kStepped ? 0 : 1;
 
 #if FREEINK_DEVICE_UT37
 // 240 px wide panel: no room for a capsule between finger-sized step buttons,
@@ -78,10 +79,10 @@ constexpr int16_t kTileGridTrailingGap = 4;
 
 // The brightness level as shown to the user, beside the caption or between the
 // compact step buttons. Single formatting point for the brightness readout.
-// Stepped boards (UT37) show the step number, e.g. "3/10".
+// Stepped boards (UT37) show the level number, e.g. "3/10" (level 0 is dark).
 void formatBrightnessReadout(char* out, const size_t size, const uint8_t value) {
   if constexpr (frontlight_levels::kStepped) {
-    snprintf(out, size, "%d/%d", frontlight_levels::indexForPercent(value) + 1, frontlight_levels::kCount);
+    snprintf(out, size, "%d/%d", frontlight_levels::indexForPercent(value), frontlight_levels::kMaxLevel);
   } else {
     snprintf(out, size, "%u%%", static_cast<unsigned>(value));
   }

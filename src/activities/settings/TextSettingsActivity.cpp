@@ -22,7 +22,6 @@
 #include "SdCardFontSystem.h"
 #include "TextSettingsPreview.h"
 #ifdef ENABLE_CHINESE_VERSION
-#include "activities/settings/FontDownloadActivity.h"
 #endif
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/FontPreloadView.h"
@@ -88,7 +87,14 @@ void TextSettingsActivity::onEnter() {
 
   fonts_.clear();
   fonts_.reserve(CrossPointSettings::BUILTIN_FONT_COUNT + (registry_ ? registry_->getFamilyCount() : 0));
-#ifdef ENABLE_CHINESE_VERSION
+#if FREEINK_DEVICE_UT37
+  // UT37 maps every built-in reader ID to the WenQuanYi 16 px strike (main.cpp).
+  // Checked before ENABLE_CHINESE_VERSION, which every build defines. The full
+  // SD family of the same name, when installed, stands in for this row.
+  if (!registry_ || !registry_->findFamily(SdCardFontSystem::COMPLETE_BUILTIN_FAMILY)) {
+    fonts_.push_back({I18N.get(StrId::STR_WQY_ZHENGHEI), true, static_cast<uint8_t>(CrossPointSettings::NOTOSANS)});
+  }
+#elif defined(ENABLE_CHINESE_VERSION)
   if (!registry_ || !registry_->findFamily(SdCardFontSystem::COMPLETE_CHINESE_NOTO_SANS_FAMILY)) {
     fonts_.push_back({I18N.get(StrId::STR_NOTO_SANS), true, static_cast<uint8_t>(CrossPointSettings::NOTOSANS)});
   }
@@ -400,9 +406,6 @@ void TextSettingsActivity::activateRow(int row) {
         if (currentFamilyIndex_ == row) {
           SETTINGS.saveToFile();
         }
-#ifdef ENABLE_CHINESE_VERSION
-        maybeOfferCompleteChineseFont();
-#endif
         requestUpdate();
       }
       break;
@@ -410,9 +413,6 @@ void TextSettingsActivity::activateRow(int row) {
       if (row != currentSizeIndex_) {
         applySize(row);
         SETTINGS.saveToFile();
-#ifdef ENABLE_CHINESE_VERSION
-        maybeOfferCompleteChineseFont();
-#endif
         requestUpdate();
       }
       break;
@@ -573,26 +573,6 @@ bool TextSettingsActivity::handleHomeGesture() {
   exitAfterFinalFont(ExitDestination::Home);
   return true;
 }
-
-#ifdef ENABLE_CHINESE_VERSION
-void TextSettingsActivity::maybeOfferCompleteChineseFont() {
-  if (FontDownloadActivity::wasChineseFontPromptShownThisBoot() || SETTINGS.sdFontFamilyName[0] != '\0' ||
-      SETTINGS.fontPointSize < 14) {
-    return;
-  }
-
-  SETTINGS.saveToFile();
-  auto downloader = makeUniqueNoThrow<FontDownloadActivity>(
-      renderer, mappedInput, FontDownloadActivity::Purpose::PromptThenManage,
-      startMode_ == StartMode::PreviewOnly ? FontDownloadActivity::StartMode::PreviewOnly
-                                           : FontDownloadActivity::StartMode::Normal);
-  if (!downloader) {
-    LOG_ERR("FONT", "OOM allocating FontDownloadActivity (%zu bytes)", sizeof(FontDownloadActivity));
-    return;
-  }
-  startActivityForResult(std::move(downloader), [this](const ActivityResult&) { requestUpdate(); });
-}
-#endif
 
 void TextSettingsActivity::confirmLayoutRow(int row) {
   switch (static_cast<LayoutRow>(row)) {

@@ -583,12 +583,12 @@ void continueChineseFontInstall(const uint8_t expectedPointSize) {
   }
 
   const bool fontReady =
-      strcmp(SETTINGS.sdFontFamilyName, SdCardFontSystem::COMPLETE_CHINESE_NOTO_SANS_FAMILY) == 0 &&
+      strcmp(SETTINGS.sdFontFamilyName, SdCardFontSystem::DOWNLOADABLE_CHINESE_FAMILY) == 0 &&
       SETTINGS.fontPointSize == expectedPointSize &&
-      sdFontSystem.resolveFontId(SdCardFontSystem::COMPLETE_CHINESE_NOTO_SANS_FAMILY, expectedPointSize) != 0;
+      sdFontSystem.resolveFontId(SdCardFontSystem::DOWNLOADABLE_CHINESE_FAMILY, expectedPointSize) != 0;
   if (!fontReady) {
     LOG_ERR("FONT", "Failed to load selected family %s at point size %u after clean restart",
-            SdCardFontSystem::COMPLETE_CHINESE_NOTO_SANS_FAMILY, static_cast<unsigned>(expectedPointSize));
+            SdCardFontSystem::DOWNLOADABLE_CHINESE_FAMILY, static_cast<unsigned>(expectedPointSize));
     SETTINGS.clearSdFontFamily();
     SETTINGS.fontPointSize = expectedPointSize;
     if (!SETTINGS.saveToFile()) LOG_ERR("FONT", "Failed to restore reader point size after font load failure");
@@ -604,7 +604,6 @@ void continueChineseFontInstall(const uint8_t expectedPointSize) {
 
   if (!fontReady) {
     auto error = makeUniqueNoThrow<FontDownloadActivity>(renderer, mappedInputManager,
-                                                         FontDownloadActivity::Purpose::ReaderAutoInstall,
                                                          FontDownloadActivity::StartMode::ResumeFontLoadError);
     if (!error) {
       LOG_ERR("FONT", "OOM allocating resumed FontDownloadActivity (%zu bytes)", sizeof(FontDownloadActivity));

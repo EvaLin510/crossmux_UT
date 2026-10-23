@@ -229,14 +229,9 @@ bool AppsMenuActivity::handleCustomInput() {
   const int visibleCount = getVisibleAppCount();
   int x = 0;
   int y = 0;
-  if (mappedInput.wasScreenTouchDown(x, y)) {
-    const int touched = iconIndexFromPoint(x, y);
-    if (touched >= 0 && touched != nav.selected) {
-      nav.selected = touched;
-      requestUpdate();
-    }
-    return true;
-  }
+  // Touch-down only claims the contact; the tap opens the app, so a highlight
+  // frame first would just add one e-ink refresh.
+  if (mappedInput.wasScreenTouchDown(x, y)) return true;
   if (mappedInput.wasScreenTapped(x, y)) {
     const int touched = iconIndexFromPoint(x, y);
     if (touched >= 0) {

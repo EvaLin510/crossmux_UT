@@ -71,6 +71,6 @@ class InxTheme final : public LyraTheme {
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon, int rowSpacing = -1) const override;
   void drawOptionPopup(const GfxRenderer& renderer, const char* title, const std::vector<std::string>& options,
-                       int selectedIndex) const override;
+                       int selectedIndex, int scrollStart = -1) const override;
   void drawMainTabBar(const GfxRenderer& renderer, Rect rect, MainTab selected) const override;
 };

@@ -42,8 +42,8 @@ static_assert(pageTurnRateForOption(CUSTOM_PAGE_TURN_OPTION, 7) == 7);
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                const std::string& title, const int currentPage, const int totalPages,
                                                const int bookProgressPercent, const uint8_t currentOrientation,
-                                               const uint8_t initialPageTurnRate, const bool hasFootnotes,
-                                               const bool hasBookmarks, const bool txtItems)
+                                               const uint8_t initialPageTurnRate, const bool hasBookmarks,
+                                               const bool txtItems)
     : UiListActivity("EpubReaderMenu", renderer, mappedInput),
       title(title),
       pendingOrientation(currentOrientation),
@@ -54,7 +54,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
   if (txtItems) {
     buildTxtMenuItems(menuItems, hasBookmarks);
   } else {
-    buildMenuItems(menuItems, hasFootnotes, hasBookmarks);
+    buildMenuItems(menuItems, hasBookmarks);
   }
   buildMenuRowItems();
 }
@@ -71,13 +71,11 @@ void EpubReaderMenuActivity::buildMenuRowItems() {
   }
 }
 
-void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, bool hasFootnotes, bool hasBookmarks) {
+void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, bool hasBookmarks) {
   items.clear();
   items.reserve(MAX_MENU_ITEMS);
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_MENU_TOC});
-  if (hasFootnotes) {
-    items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
-  }
+  // No footnotes row: tapping a footnote number in the text jumps to it.
   if (hasBookmarks) {
     items.push_back({MenuAction::BOOKMARKS, StrId::STR_MENU_BOOKMARK_LIST});
   }

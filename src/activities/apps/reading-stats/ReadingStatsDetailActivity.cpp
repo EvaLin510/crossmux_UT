@@ -531,14 +531,7 @@ void ReadingStatsDetailActivity::loop() {
 
   int touchX = 0;
   int touchY = 0;
-  if (mappedInput.wasScreenTouchDown(touchX, touchY)) {
-    const int touchedItem = contains(hero.adjust, touchX, touchY) ? DETAIL_ADJUST_FOCUS_INDEX : 0;
-    if ((contains(hero.cover, touchX, touchY) || touchedItem == DETAIL_ADJUST_FOCUS_INDEX) &&
-        selectedStatsItem != touchedItem) {
-      selectedStatsItem = touchedItem;
-      requestUpdate();
-    }
-  }
+  // No touch-down highlight: both targets leave this screen on the tap.
   if (mappedInput.wasScreenTapped(touchX, touchY)) {
     if (contains(hero.adjust, touchX, touchY)) {
       selectedStatsItem = DETAIL_ADJUST_FOCUS_INDEX;

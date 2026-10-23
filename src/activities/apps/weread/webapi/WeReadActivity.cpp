@@ -1172,13 +1172,10 @@ void WeReadActivity::handleDetailInput() {
                                                 kDetailListActionCount, actions.x, actions.x + actions.width);
   if (actionTouch != MappedInputManager::RowTouch::None) {
     const auto action = static_cast<DetailAction>(touchedAction + 1);
-    if (detailActionEnabled(action)) {
-      const int selection = touchedAction + 1;
-      if (detailSelected_ != selection) {
-        detailSelected_ = selection;
-        if (actionTouch == MappedInputManager::RowTouch::Down) requestUpdate();
-      }
-      if (actionTouch == MappedInputManager::RowTouch::Tap) activateDetailSelection();
+    // Touch-down just claims the contact; the tap selects and activates.
+    if (detailActionEnabled(action) && actionTouch == MappedInputManager::RowTouch::Tap) {
+      detailSelected_ = touchedAction + 1;
+      activateDetailSelection();
     }
     return;
   }
@@ -1376,11 +1373,7 @@ void WeReadActivity::handleDisclaimerInput() {
       activateDisclaimerSelection();
       return;
     case MappedInputManager::RowTouch::Down:
-      if (disclaimerSelected_ != touched) {
-        disclaimerSelected_ = touched;
-        requestUpdate();
-      }
-      return;
+      return;  // the tap activates; no highlight refresh before it
     case MappedInputManager::RowTouch::None:
       break;
   }
@@ -1694,17 +1687,15 @@ void WeReadActivity::handleShelfInput() {
 
   int x = 0;
   int y = 0;
-  if (mappedInput.wasScreenTouchDown(x, y)) {
-    const int touched = weReadShelfIndexFromPoint(content, layout, shelfSelected_.load(), count, x, y);
-    if (touched >= 0) {
-      moveShelfSelection(touched, itemsPerPage);
-      return;
-    }
+  // Touch-down on a book only claims the contact; the tap opens it.
+  if (mappedInput.wasScreenTouchDown(x, y) &&
+      weReadShelfIndexFromPoint(content, layout, shelfSelected_.load(), count, x, y) >= 0) {
+    return;
   }
   if (mappedInput.wasScreenTapped(x, y)) {
     const int touched = weReadShelfIndexFromPoint(content, layout, shelfSelected_.load(), count, x, y);
     if (touched >= 0) {
-      moveShelfSelection(touched, itemsPerPage);
+      shelfSelected_.store(touched);
       resetShelfCoverLoading();
       activateSelected();
       return;

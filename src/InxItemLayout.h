@@ -125,6 +125,12 @@ constexpr int start(const int selected, const int optionCount) {
   const int maxStart = optionCount - visible;
   return wanted < 0 ? 0 : (wanted > maxStart ? maxStart : wanted);
 }
+
+// Keeps a swipe-paged first row inside [0, optionCount - visibleRows].
+constexpr int clampStart(const int wanted, const int optionCount) {
+  const int maxStart = optionCount - visibleRows(optionCount);
+  return wanted < 0 ? 0 : (wanted > maxStart ? maxStart : wanted);
+}
 }  // namespace InxOptionGeometry
 
 namespace InxAccordionGeometry {

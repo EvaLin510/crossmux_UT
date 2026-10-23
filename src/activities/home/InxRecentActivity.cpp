@@ -547,16 +547,9 @@ void InxRecentActivity::loop() {
 
   int x = 0;
   int y = 0;
-  if (mappedInput.wasScreenTouchDown(x, y)) {
-    const int touched = indexFromPoint(x, y);
-    // Flow: moving the selection on touch-down would re-centre the carousel
-    // and the release would then hit a different book; the tap opens it.
-    if (touched >= 0 && touched != selected && layout() != InxRecentLayout::Flow) {
-      selected = touched;
-      requestUpdate();
-    }
-    return;
-  }
+  // Touch-down only claims the contact: the tap opens the book, so a highlight
+  // frame first would just add one e-ink refresh.
+  if (mappedInput.wasScreenTouchDown(x, y)) return;
   if (mappedInput.wasScreenTapped(x, y)) {
     const int touched = indexFromPoint(x, y);
     if (touched >= 0) {

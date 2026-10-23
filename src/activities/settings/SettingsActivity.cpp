@@ -23,7 +23,6 @@
 #include "CrossPointSettings.h"
 #include "DateTimeSettingsActivity.h"
 #include "DictionaryDownloadActivity.h"
-#include "FontDownloadActivity.h"
 #include "InxItemLayout.h"
 #include "KOReaderSettingsActivity.h"
 #include "LanguageSelectActivity.h"
@@ -329,7 +328,6 @@ void SettingsActivity::rebuildSettingsLists() {
     pool.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
     pool.push_back(SettingInfo::Action(StrId::STR_ABOUT, SettingAction::About));
     pool.push_back(SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
-    pool.push_back(SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
     pool.push_back(SettingInfo::Action(StrId::STR_MANAGE_DICTIONARIES, SettingAction::ManageDictionaries));
     pool.push_back(SettingInfo::Action(StrId::STR_READING_TOUCH_LONG_PRESS, SettingAction::TouchLongPress));
     pool.push_back(SettingInfo::Action(StrId::STR_READING_STATUS_BAR, SettingAction::CustomiseStatusBar));
@@ -410,14 +408,12 @@ void SettingsActivity::rebuildSettingsLists() {
   readerSettings.insert(readerSettings.begin(),
                         SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
   readerSettings.insert(readerSettings.begin() + 1,
-                        SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
-  readerSettings.insert(readerSettings.begin() + 2,
                         SettingInfo::Action(StrId::STR_MANAGE_DICTIONARIES, SettingAction::ManageDictionaries));
   const auto dictionarySetting =
-      std::find_if(readerSettings.begin() + 3, readerSettings.end(),
+      std::find_if(readerSettings.begin() + 2, readerSettings.end(),
                    [](const SettingInfo& setting) { return setting.nameId == StrId::STR_DICTIONARY; });
   if (dictionarySetting != readerSettings.end()) {
-    std::rotate(readerSettings.begin() + 3, dictionarySetting, dictionarySetting + 1);
+    std::rotate(readerSettings.begin() + 2, dictionarySetting, dictionarySetting + 1);
   }
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
 #endif
@@ -461,7 +457,6 @@ void SettingsActivity::groupUt37Settings(std::vector<SettingInfo>& pool) {
   take(displaySettings, action(SettingAction::CustomiseStatusBar));
 
   take(readerSettings, action(SettingAction::TextSettings));
-  take(readerSettings, action(SettingAction::DownloadFonts));
   take(readerSettings, action(SettingAction::ManageDictionaries));
   take(readerSettings, name(StrId::STR_DICTIONARY));
   take(readerSettings, name(StrId::STR_EPUB_IMAGES));
@@ -890,13 +885,6 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::SdFirmwareUpdate:
         startActivityForResultWith<SdFirmwareUpdateActivity>(resultHandler);
-        break;
-      case SettingAction::DownloadFonts:
-        releaseListsForMemoryHungryChild();
-        if (!startActivityForResultWith<FontDownloadActivity>(resultHandler)) {
-          rebuildSettingsLists();
-          requestUpdate();
-        }
         break;
       case SettingAction::ManageDictionaries:
         startActivityForResultWith<DictionaryDownloadActivity>([this](const ActivityResult&) {

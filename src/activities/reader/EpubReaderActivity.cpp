@@ -413,7 +413,7 @@ void EpubReaderActivity::openReaderMenu() {
         }
       },
       epub->getTitle(), currentPage, totalPages, bookProgressPercent, SETTINGS.orientation, pageTurnRate,
-      !currentPageFootnotes.empty(), !cachedBookmarks.empty());
+      !cachedBookmarks.empty());
 }
 
 ReaderRenderSpec EpubReaderActivity::effectiveRenderSpec(const uint16_t width, const uint16_t height) const {
@@ -520,10 +520,9 @@ bool EpubReaderActivity::maybeOfferCompleteChineseFont() {
   const uint32_t codepoint = pendingMissingChineseCodepoint_.exchange(0, std::memory_order_relaxed);
   if (codepoint == 0 || FontDownloadActivity::wasChineseFontPromptShownThisBoot()) return false;
 
-  LOG_INF("FONT", "Missing built-in Chinese glyph U+%04X; offering automatic NotoSansSC install",
-          static_cast<unsigned>(codepoint));
-  auto downloader =
-      makeUniqueNoThrow<FontDownloadActivity>(renderer, mappedInput, FontDownloadActivity::Purpose::ReaderAutoInstall);
+  LOG_INF("FONT", "Missing built-in Chinese glyph U+%04X; offering automatic %s install",
+          static_cast<unsigned>(codepoint), SdCardFontSystem::DOWNLOADABLE_CHINESE_FAMILY);
+  auto downloader = makeUniqueNoThrow<FontDownloadActivity>(renderer, mappedInput);
   if (!downloader) {
     LOG_ERR("FONT", "OOM allocating FontDownloadActivity (%zu bytes)", sizeof(FontDownloadActivity));
     return false;
@@ -1146,9 +1145,6 @@ void EpubReaderActivity::runTouchLongPress(const uint8_t action) {
       break;
     case CrossPointSettings::TLP_TOC:
       viaMenuAction(MenuAction::SELECT_CHAPTER);
-      break;
-    case CrossPointSettings::TLP_FOOTNOTES:
-      if (!currentPageFootnotes.empty()) viaMenuAction(MenuAction::FOOTNOTES);
       break;
     case CrossPointSettings::TLP_BOOKMARK_LIST:
       viaMenuAction(MenuAction::BOOKMARKS);

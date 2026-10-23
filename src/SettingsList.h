@@ -23,7 +23,14 @@
 // built-in rows are visible in this firmware.
 inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
   std::vector<StrId> enumValues;
-#ifdef ENABLE_CHINESE_VERSION
+#if FREEINK_DEVICE_UT37
+  // UT37 maps every built-in reader ID to the WenQuanYi 16 px strike (main.cpp).
+  // Checked before ENABLE_CHINESE_VERSION, which every build defines. The full
+  // SD family of the same name, when installed, stands in for this row.
+  if (!registry || !registry->findFamily(SdCardFontSystem::COMPLETE_BUILTIN_FAMILY)) {
+    enumValues.push_back(StrId::STR_WQY_ZHENGHEI);
+  }
+#elif defined(ENABLE_CHINESE_VERSION)
   if (!registry || !registry->findFamily(SdCardFontSystem::COMPLETE_CHINESE_NOTO_SANS_FAMILY)) {
     enumValues.push_back(StrId::STR_NOTO_SANS);
   }
@@ -62,7 +69,7 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
       }
       // SD font name not found in registry — fall through to built-in
     }
-#ifdef ENABLE_CHINESE_VERSION
+#if defined(ENABLE_CHINESE_VERSION) || FREEINK_DEVICE_UT37
     return 0;
 #else
     return SETTINGS.fontFamily < CrossPointSettings::BUILTIN_FONT_COUNT ? SETTINGS.fontFamily : 0;
@@ -71,7 +78,7 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
 
   s.valueSetter = [registry, builtinOptionCount](uint8_t v) {
     if (v < builtinOptionCount) {
-#ifdef ENABLE_CHINESE_VERSION
+#if defined(ENABLE_CHINESE_VERSION) || FREEINK_DEVICE_UT37
       SETTINGS.fontFamily = CrossPointSettings::NOTOSANS;
 #else
       SETTINGS.fontFamily = v;

@@ -466,6 +466,8 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       for (int i = 0; i < TOUCH_LONG_PRESS_ZONES; ++i) {
         touchLongPress[i] = clamp(zones[i] | static_cast<uint8_t>(TLP_NONE),
                                   static_cast<uint8_t>(TOUCH_LONG_PRESS_ACTION_COUNT), TLP_NONE);
+        // Footnotes left the picker (tapping the number in the text jumps to it).
+        if (touchLongPress[i] == TLP_FOOTNOTES) touchLongPress[i] = TLP_NONE;
       }
     }
   }

@@ -61,14 +61,14 @@ void Activity::finish() { activityManager.popActivity(); }
 Activity::ListTouchResult Activity::handleListTouch(int& selectedIndex, const int itemCount, const int listTop,
                                                     const int listHeight, const bool hasSubtitle) {
   int touched = -1;
+  // Touch-down only claims the contact: a highlight frame there would cost a
+  // whole e-ink refresh before the tap (or swipe) that follows repaints anyway.
   if (mappedInput.wasListItemTouchedDown(touched, itemCount, selectedIndex, listTop, listHeight, hasSubtitle)) {
-    if (selectedIndex != touched) {
-      selectedIndex = touched;
-      requestUpdate();
-    }
     return ListTouchResult::Consumed;
   }
   if (mappedInput.wasListItemTapped(touched, itemCount, selectedIndex, listTop, listHeight, hasSubtitle)) {
+    // Field editors only move the selection on a tap; show it in this one refresh.
+    if (selectedIndex != touched) requestUpdate();
     selectedIndex = touched;
     return ListTouchResult::Activated;
   }

@@ -248,18 +248,11 @@ void DictionaryWordSelectActivity::loop() {
 
   if (words.empty()) return;
 
-  // Touch: a touch-down moves the highlight to the touched word (differential
-  // repaint), a tap on a word selects and looks it up in one go.
+  // Touch: a tap on a word selects and looks it up in one go. Touch-down only
+  // claims the contact; highlighting it first would cost one more refresh.
   int tx = 0;
   int ty = 0;
-  if (mappedInput.wasScreenTouchDown(tx, ty)) {
-    const int hit = wordAt(tx, ty);
-    if (hit >= 0 && hit != selected) {
-      selected = hit;
-      requestUpdate();
-    }
-    return;
-  }
+  if (mappedInput.wasScreenTouchDown(tx, ty)) return;
   if (mappedInput.wasScreenTapped(tx, ty)) {
     const int hit = wordAt(tx, ty);
     if (hit >= 0) {

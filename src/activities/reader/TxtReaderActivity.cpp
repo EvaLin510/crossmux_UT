@@ -172,7 +172,7 @@ void TxtReaderActivity::openReaderMenu() {
 #endif
         if (!result.isCancelled) onReaderMenuConfirm(menu->action);
       },
-      txt->getTitle(), 0, 0, getProgressPercent(), SETTINGS.orientation, 0, false, !cachedBookmarks.empty(), true);
+      txt->getTitle(), 0, 0, getProgressPercent(), SETTINGS.orientation, 0, !cachedBookmarks.empty(), true);
 }
 
 void TxtReaderActivity::onReaderMenuConfirm(const int action) {
@@ -289,7 +289,6 @@ void TxtReaderActivity::runTouchLongPress(const uint8_t action) {
     case CrossPointSettings::TLP_SYNC:
       launchKOReaderSync();
       break;
-    case CrossPointSettings::TLP_FOOTNOTES:  // TXT has no footnotes
     case CrossPointSettings::TLP_NONE:
     default:
       break;

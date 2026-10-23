@@ -249,7 +249,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     TLP_NONE = 0,
     TLP_READER_MENU = 1,
     TLP_TOC = 2,
-    TLP_FOOTNOTES = 3,
+    TLP_FOOTNOTES = 3,  // retired: no longer offered, loads as TLP_NONE
     TLP_BOOKMARK_LIST = 4,
     TLP_TOGGLE_BOOKMARK = 5,
     TLP_TEXT_SETTINGS = 6,
@@ -469,7 +469,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Frontlight quick-panel state. Brightness and warmth remain persisted even
   // when restore-on-wake is disabled.
 #if FREEINK_DEVICE_UT37
-  uint8_t frontlightBrightness = 4;  // first-ever level: the dimmest of the ten UT37 steps
+  uint8_t frontlightBrightness = 4;  // first-ever level: the dimmest lit UT37 step (level 1)
 #else
   uint8_t frontlightBrightness = 60;
 #endif

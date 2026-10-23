@@ -16,7 +16,7 @@ const StrId zoneNames[CrossPointSettings::TOUCH_LONG_PRESS_ZONES] = {
 };
 
 // Indexed by TOUCH_LONG_PRESS_ACTION; the reader-menu wording is reused.
-const StrId actionNames[TouchLongPressSettingsActivity::OPTION_COUNT] = {
+const StrId actionNames[CrossPointSettings::TOUCH_LONG_PRESS_ACTION_COUNT] = {
     StrId::STR_NONE_OPT,           StrId::STR_READER_MENU,       StrId::STR_MENU_TOC,
     StrId::STR_FOOTNOTES,          StrId::STR_MENU_BOOKMARK_LIST, StrId::STR_MENU_ADD_REMOVE_BOOKMARK,
     StrId::STR_TEXT_SETTINGS,      StrId::STR_MENU_DICT_LOOKUP,  StrId::STR_AUTO_TURN,
@@ -24,10 +24,33 @@ const StrId actionNames[TouchLongPressSettingsActivity::OPTION_COUNT] = {
 };
 static_assert(sizeof(actionNames) / sizeof(actionNames[0]) == CrossPointSettings::TOUCH_LONG_PRESS_ACTION_COUNT,
               "one label per TOUCH_LONG_PRESS_ACTION");
+
+// Picker rows: every action except the retired TLP_FOOTNOTES.
+const uint8_t pickerActions[TouchLongPressSettingsActivity::OPTION_COUNT] = {
+    CrossPointSettings::TLP_NONE,          CrossPointSettings::TLP_READER_MENU,
+    CrossPointSettings::TLP_TOC,           CrossPointSettings::TLP_BOOKMARK_LIST,
+    CrossPointSettings::TLP_TOGGLE_BOOKMARK, CrossPointSettings::TLP_TEXT_SETTINGS,
+    CrossPointSettings::TLP_DICTIONARY,    CrossPointSettings::TLP_AUTO_TURN,
+    CrossPointSettings::TLP_GO_TO_PERCENT, CrossPointSettings::TLP_GO_HOME,
+    CrossPointSettings::TLP_SYNC,
+};
+const StrId pickerNames[TouchLongPressSettingsActivity::OPTION_COUNT] = {
+    StrId::STR_NONE_OPT,           StrId::STR_READER_MENU,       StrId::STR_MENU_TOC,
+    StrId::STR_MENU_BOOKMARK_LIST, StrId::STR_MENU_ADD_REMOVE_BOOKMARK, StrId::STR_TEXT_SETTINGS,
+    StrId::STR_MENU_DICT_LOOKUP,   StrId::STR_AUTO_TURN,         StrId::STR_GO_TO_PERCENT,
+    StrId::STR_GO_HOME_BUTTON,     StrId::STR_SYNC_PROGRESS,
+};
+
+int pickerIndexOf(const uint8_t action) {
+  for (int i = 0; i < TouchLongPressSettingsActivity::OPTION_COUNT; i++) {
+    if (pickerActions[i] == action) return i;
+  }
+  return 0;
+}
 }  // namespace
 
 StrId TouchLongPressSettingsActivity::actionLabel(const uint8_t action) {
-  return action < OPTION_COUNT ? actionNames[action] : StrId::STR_NONE_OPT;
+  return action < CrossPointSettings::TOUCH_LONG_PRESS_ACTION_COUNT ? actionNames[action] : StrId::STR_NONE_OPT;
 }
 
 TouchLongPressSettingsActivity::TouchLongPressSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -36,7 +59,10 @@ TouchLongPressSettingsActivity::TouchLongPressSettingsActivity(GfxRenderer& rend
 void TouchLongPressSettingsActivity::onEnter() {
   UiListActivity::onEnter();
   for (int i = 0; i < ZONE_COUNT; i++) {
-    if (SETTINGS.touchLongPress[i] >= OPTION_COUNT) SETTINGS.touchLongPress[i] = CrossPointSettings::TLP_NONE;
+    if (SETTINGS.touchLongPress[i] >= CrossPointSettings::TOUCH_LONG_PRESS_ACTION_COUNT ||
+        SETTINGS.touchLongPress[i] == CrossPointSettings::TLP_FOOTNOTES) {
+      SETTINGS.touchLongPress[i] = CrossPointSettings::TLP_NONE;
+    }
     rowItems_[i].label = I18N.get(zoneNames[i]);
     rowItems_[i].actionValue = static_cast<int16_t>(i);
   }
@@ -52,11 +78,12 @@ void TouchLongPressSettingsActivity::activateIndex(const int index) {
   nav.selected = index;
   // The popup covers the list; a lingering flash would gray an unrelated row.
   app.clearTapFlash();
-  optionPopup.show(zoneNames[index], actionNames, OPTION_COUNT, SETTINGS.touchLongPress[index], [index](int idx) {
-    if (idx < 0 || idx >= OPTION_COUNT) return;
-    SETTINGS.touchLongPress[index] = static_cast<uint8_t>(idx);
-    SETTINGS.saveToFile();
-  });
+  optionPopup.show(zoneNames[index], pickerNames, OPTION_COUNT, pickerIndexOf(SETTINGS.touchLongPress[index]),
+                   [index](int idx) {
+                     if (idx < 0 || idx >= OPTION_COUNT) return;
+                     SETTINGS.touchLongPress[index] = pickerActions[idx];
+                     SETTINGS.saveToFile();
+                   });
   requestUpdate();
 }
 

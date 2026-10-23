@@ -14,8 +14,8 @@ class TouchLongPressSettingsActivity final : public UiListActivity {
   void onEnter() override;
   void render(RenderLock&&) override;
 
-  // Picker order (also the label table order); values are TOUCH_LONG_PRESS_ACTION.
-  static constexpr int OPTION_COUNT = CrossPointSettings::TOUCH_LONG_PRESS_ACTION_COUNT;
+  // Picker rows: every TOUCH_LONG_PRESS_ACTION except the retired TLP_FOOTNOTES.
+  static constexpr int OPTION_COUNT = CrossPointSettings::TOUCH_LONG_PRESS_ACTION_COUNT - 1;
   static StrId actionLabel(uint8_t action);
 
  private:

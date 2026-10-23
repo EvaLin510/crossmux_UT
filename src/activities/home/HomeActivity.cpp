@@ -432,42 +432,34 @@ void HomeActivity::loop() {
     }
   }
 
+  const auto inCoverBand = [&](const int x, const int y) {
+    return x >= 0 && x < renderer.getScreenWidth() && y >= metrics.homeTopPadding &&
+           y < metrics.homeTopPadding + metrics.homeCoverTileHeight;
+  };
   int tx = 0;
   int ty = 0;
-  if (!recentBooks.empty() && mappedInput.wasScreenTouchDown(tx, ty) && tx >= 0 && tx < renderer.getScreenWidth() &&
-      ty >= metrics.homeTopPadding && ty < metrics.homeTopPadding + metrics.homeCoverTileHeight) {
-    int touchedBook = 0;
+  // Touch-down on the covers only claims the contact: the tap opens the book,
+  // so a highlight frame first would just add one e-ink refresh.
+  if (!recentBooks.empty() && mappedInput.wasScreenTouchDown(tx, ty) && inCoverBand(tx, ty)) return;
+
+  int tapX = 0;
+  int tapY = 0;
+  if (!recentBooks.empty() && mappedInput.wasScreenTapped(tapX, tapY) && inCoverBand(tapX, tapY)) {
     if (isCarousel) {
       const int centerBook =
           selectorIndex < bookCount ? selectorIndex : std::clamp(lastCarouselBookIndex, 0, bookCount - 1);
-      if (tx < renderer.getScreenWidth() / 3) {
-        touchedBook = ButtonNavigator::previousIndex(centerBook, bookCount);
-      } else if (tx >= renderer.getScreenWidth() * 2 / 3) {
-        touchedBook = ButtonNavigator::nextIndex(centerBook, bookCount);
+      if (tapX < renderer.getScreenWidth() / 3) {
+        selectorIndex = ButtonNavigator::previousIndex(centerBook, bookCount);
+      } else if (tapX >= renderer.getScreenWidth() * 2 / 3) {
+        selectorIndex = ButtonNavigator::nextIndex(centerBook, bookCount);
       } else {
-        touchedBook = centerBook;
+        selectorIndex = centerBook;
       }
-      lastCarouselBookIndex = touchedBook;
+      lastCarouselBookIndex = selectorIndex;
     } else {
       // Multi-cover themes (Lyra3Covers and the like) render several recent
       // books side by side: map the finger to the cover it is on instead of
       // always settling on the first book.
-      touchedBook = GUI.recentBookIndexAt(tx, renderer.getScreenWidth());
-      touchedBook = std::clamp(touchedBook, 0, static_cast<int>(recentBooks.size()) - 1);
-    }
-    if (selectorIndex != touchedBook) {
-      selectorIndex = touchedBook;
-      requestCarouselUpdate(CarouselUpdateScope::Full);
-    }
-    return;
-  }
-
-  int tapX = 0;
-  int tapY = 0;
-  if (!recentBooks.empty() && mappedInput.wasScreenTapped(tapX, tapY) && tapX >= 0 &&
-      tapX < renderer.getScreenWidth() && tapY >= metrics.homeTopPadding &&
-      tapY < metrics.homeTopPadding + metrics.homeCoverTileHeight) {
-    if (!isCarousel) {
       selectorIndex = GUI.recentBookIndexAt(tapX, renderer.getScreenWidth());
       selectorIndex = std::clamp(selectorIndex, 0, static_cast<int>(recentBooks.size()) - 1);
     }
@@ -492,16 +484,8 @@ void HomeActivity::loop() {
   if (menuTouch != MappedInputManager::RowTouch::None) {
     const int touchedIndex =
         metrics.homeContinueReadingInMenu ? menuRow : menuRow + static_cast<int>(recentBooks.size());
-    if (menuTouch == MappedInputManager::RowTouch::Down) {
-      if (selectorIndex != touchedIndex) {
-        selectorIndex = touchedIndex;
-        if (isCarousel) {
-          requestCarouselUpdate(CarouselUpdateScope::MenuOnly);
-        } else {
-          requestUpdate();
-        }
-      }
-    } else {
+    // Touch-down just claims the contact; the tap activates the row.
+    if (menuTouch == MappedInputManager::RowTouch::Tap) {
       selectorIndex = touchedIndex;
       activateSelection();
     }

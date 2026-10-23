@@ -65,7 +65,8 @@ inline freeink::ui::ThemeTokens uiThemeTokens(const freeink::ui::GfxRendererTarg
   tokens.capsuleRadius = static_cast<uint8_t>(metrics.capsuleRadius);
   tokens.bodyText.bold = metrics.listTitleBold;
   tokens.listEmphasizedText = tokens.titleText;
-  tokens.listEmphasizedText.bold = true;
+  // UT37 keeps emphasized list rows (the Settings category headers) regular weight.
+  tokens.listEmphasizedText.bold = !FREEINK_DEVICE_UT37;
   tokens.listValueText = tokens.bodyText;
   if (!UITheme::getInstance().showSelectionCursor()) SelectionCursorPolicy::hideFreeInkListFocus(tokens);
   return tokens;

@@ -7,7 +7,9 @@ namespace CrossMuxEndpoints {
 inline constexpr char GLOBAL_HOST[] = "crossmux.com";
 inline constexpr char CHINA_HOST[] = "crossmux.cn";
 inline constexpr char OTA_MANIFEST_FORMAT[] = "https://%s/api/ota/manifest?variant=%s%s&model=%s";
-inline constexpr char FONT_MANIFEST_FORMAT[] = "https://%s/api/assets/fonts/m%s-b%s/fonts.json";
+// Repository folder holding WQYZhengHei_<pt>.cpfont for the reader's missing-glyph install.
+inline constexpr char WQY_ZHENGHEI_FONT_BASE_URL[] =
+    "https://raw.githubusercontent.com/EvaLin510/crossmux_UT/ut-1.6.0/ut37/.fonts/WQYZhengHei/";
 inline constexpr char DICTIONARY_MANIFEST_FORMAT[] = "https://%s/api/assets/dictionaries/manifest?version=1&lang=%s";
 inline constexpr char AIRPAGE_SUBDOMAIN[] = "airpage.";
 
