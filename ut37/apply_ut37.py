@@ -54,10 +54,8 @@ constexpr BoardProfile UT37 = {
     // GPIO42 (TOUCH_WAKE/SD_WAKE) -> R4 -> Q1 gate: Q1 grounds the SD card (SD_GND). Active-HIGH.
     {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, 42, false, 0, true},
     // back, confirm, left, right, up, down, power, powerActiveHigh
-    // SIDEKEY=GPIO17 (RTC, wakes from deep sleep) -> power. SW2 switches it to VCC_3V3 with
-    // R99 100k to GND, so it is ACTIVE-HIGH. SIDEKEY1 (GPIO46) is a net label with no switch
-    // on the schematic (one key was removed in rev 2.0), so it stays unassigned.
-    {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, 17, true},
+    // SIDEKEY=GPIO17 (RTC, wakes from deep sleep) -> power; SIDEKEY1=GPIO46 -> up/function.
+    {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, 46, PIN_UNASSIGNED, 17, false},
     14,              // batteryAdc (ADC2_CH3): 330k/100k divider
     PIN_UNASSIGNED,  // charger STAT only drives LED2
     4.3f,            // (330k+100k)/100k
@@ -97,7 +95,7 @@ edit("freeink-sdk/libs/hardware/BoardConfig/include/BoardConfig.h", sdk)
 
 # 4) SDMMC mount: honour sd.powerActiveHigh (the stock sequence assumes an active-LOW gate)
 def sdmmc(s):
-    if "sdOnHigh" in s:
+    if "ACTIVE.sd.powerActiveHigh" in s:
         return s
     old = ("      digitalWrite(sdPwr, HIGH);\n"
            "      delay(80);\n"
@@ -112,61 +110,118 @@ def sdmmc(s):
     return s.replace(old, new, 1)
 edit("freeink-sdk/libs/hardware/SDCardManager/src/SdmmcBlockDevice.cpp", sdmmc)
 
-# 5) Power behaviour: UT37 is native-USB and the post-flash reset reads as a USB-powered
-#    cold boot, which would deep-sleep immediately ("CROSSMUX SLEEPING"). Stay awake
-#    there, and accept a click wake (S3 boot latency drops short clicks; the SIDEKEY has a
-#    hard external 100k pull-down, active-HIGH, so ghost wakes are not a concern).
-def keepawake(s):
-    if "FREEINK_DEVICE_UT37 ||" in s and "After USB Power" in s:
+# 5) Diagnostics (UT37 bring-up): when the SD mount fails at boot, wait for a USB serial
+#    host (<=6 s), report the SD-power gate state, and retry once so the [SD] lines are
+#    visible to the web flasher's serial monitor.
+def maindiag(s):
+    if "UT37 diag" in s:
         return s
-    i = s.find("Wakeup reason: After USB Power")
-    need(s, "Wakeup reason: After USB Power", "src/main.cpp (AfterUSBPower)")
-    j = s.find("#if FREEINK_DEVICE_X4PRO ||", i)
-    if j < 0:
-        sys.exit("ANCHOR NOT FOUND in main.cpp: AfterUSBPower device list")
-    return s[:j] + "#if FREEINK_DEVICE_UT37 || FREEINK_DEVICE_X4PRO ||" + s[j + len("#if FREEINK_DEVICE_X4PRO ||"):]
-edit("src/main.cpp", keepawake)
-
-def clickwake(s):
-    if "FREEINK_DEVICE_UT37" in s:
-        return s
-    old = "if (BoardConfig::isPaperMono() || BoardConfig::isM5PaperV11() || BoardConfig::ACTIVE.input.power < 0) {"
-    need(s, old, "HalGPIO.cpp verifyPowerButtonWakeup")
-    new = ("// UT37: same S3 native-USB boot latency drops short clicks; its SIDEKEY has a\n"
-           "  // hard external 100k pull-down (active-HIGH), so ghost wakes are not a concern.\n"
-           "  if (FREEINK_DEVICE_UT37 || BoardConfig::isPaperMono() || BoardConfig::isM5PaperV11() ||\n"
-           "      BoardConfig::ACTIVE.input.power < 0) {")
+    old = '    LOG_ERR("MAIN", "SD card initialization failed");\n'
+    need(s, old, "src/main.cpp")
+    new = old + (
+        '#if FREEINK_DEVICE_UT37\n'
+        '    {  // UT37 diag: capture SD failure details over USB CDC\n'
+        '      const unsigned long diagStart = millis();\n'
+        '      while (millis() - diagStart < 6000) delay(10);\n'
+        '      delay(300);\n'
+        '      esp_rom_printf("[UT37] SD gate GPIO%d level=%d (powerActiveHigh=%d)\\n", (int)BoardConfig::ACTIVE.sd.powerEnable,\n'
+        '                    digitalRead(BoardConfig::ACTIVE.sd.powerEnable), (int)BoardConfig::ACTIVE.sd.powerActiveHigh);\n'
+        '      const bool retryOk = Storage.begin();\n'
+        '      esp_rom_printf("[UT37] SD retry %s\\n", retryOk ? "OK" : "FAILED");\n'
+        '    }\n'
+        '#endif\n')
     return s.replace(old, new, 1)
-edit("lib/hal/HalGPIO.cpp", clickwake)
+edit("src/main.cpp", maindiag)
 
-# 6) Input polarity: the generic DigitalButtons path configures every button INPUT_PULLUP
-#    and reads power as active-LOW. The UT37 SIDEKEY is active-HIGH (R99 100k pull-down),
-#    so reuse the EEGO A4 polarity-aware power handling for it.
-def inputpolarity(s):
-    if "FREEINK_DEVICE_UT37" in s:
+# 6) UT37 external-power detect. No charger-STAT / VBUS pin reaches the MCU, and the SDK's
+#    battery.isCharging() infers charging from raw ADC and false-fires when the divider
+#    rebounds after wake (89% + charge icon, then 90%). Use USB SOF (definite) plus a slow,
+#    debounced ADC trend that cannot report charging until it has >=60 s of settled samples.
+UT37_POWER = r'''
+#if FREEINK_DEVICE_UT37
+// UT37: SOF = host present (definite). Otherwise infer a charger from a slow rising battery
+// voltage: samples >=20 s apart, ring of 6, history dropped after a >120 s gap (sleep/wake),
+// so nothing can be reported until ~60 s of settled data exists.
+static bool ut37ExternalPower() {
+  if (usbHostSofActive()) return true;
+  constexpr int N = 6;
+  constexpr unsigned long STEP_MS = 20000, GAP_RESET_MS = 120000;
+  constexpr int RISE_MV = 25, STEP_DIP_MV = 5, UNPLUG_DIP_MV = 15;
+  static int mv[N];
+  static int count = 0;
+  static unsigned long lastSampleMs = 0, lastCallMs = 0;
+  static bool latched = false;
+  const unsigned long now = millis();
+  if (lastCallMs != 0 && now - lastCallMs > GAP_RESET_MS) {  // slept: divider still rebounding
+    count = 0;
+    latched = false;
+    lastSampleMs = 0;
+  }
+  lastCallMs = now;
+  if (lastSampleMs == 0 || now - lastSampleMs >= STEP_MS) {
+    int32_t sum = 0;
+    int ok = 0;
+    for (int i = 0; i < 16; ++i) {
+      const int v = analogReadMilliVolts(14);
+      if (v > 300) { sum += v; ++ok; }  // ADC2 returns ~0 while Wi-Fi owns it
+      delayMicroseconds(200);
+    }
+    if (ok >= 8) {
+      lastSampleMs = now;
+      const int battMv = static_cast<int>(sum / ok * 43 / 10);  // 330k/100k divider
+      if (count == N) {
+        for (int i = 1; i < N; ++i) mv[i - 1] = mv[i];
+        count = N - 1;
+      }
+      mv[count++] = battMv;
+      if (count >= 4) {
+        bool rising = (mv[count - 1] - mv[0]) >= RISE_MV;
+        for (int i = 1; i < count; ++i) rising = rising && (mv[i] - mv[i - 1]) >= -STEP_DIP_MV;
+        int peak = mv[0];
+        for (int i = 1; i < count; ++i) if (mv[i] > peak) peak = mv[i];
+        if (rising) latched = true;
+        else if (latched && peak - mv[count - 1] >= UNPLUG_DIP_MV) latched = false;
+      }
+    }
+  }
+  return latched;
+}
+#endif
+
+'''
+def gpio_ut37(s):
+    if "ut37ExternalPower" in s:
         return s
-    old = ("    pinMode(BoardConfig::ACTIVE.input.power, BoardConfig::ACTIVE.input.powerActiveHigh ? INPUT_PULLDOWN : INPUT_PULLUP);\n"
-           "  }\n"
-           "#endif\n"
-           "  beginTouch();\n"
-           "}\n")
-    need(s, old, "InputManager.cpp begin()")
-    s = s.replace(old, old[:-len("  beginTouch();\n}\n")] + (
-        "#if FREEINK_DEVICE_UT37\n"
-        "  // UT37 SIDEKEY (GPIO17) is active-HIGH with an external 100k pull-down; the\n"
-        "  // generic INPUT_PULLUP above would fight it and read as held.\n"
-        "  if (BoardConfig::ACTIVE.board == BoardConfig::Board::Ut37 && BoardConfig::ACTIVE.input.power >= 0) {\n"
-        "    pinMode(BoardConfig::ACTIVE.input.power, BoardConfig::ACTIVE.input.powerActiveHigh ? INPUT_PULLDOWN : INPUT_PULLUP);\n"
-        "  }\n"
-        "#endif\n"
-        "  beginTouch();\n"
-        "}\n"), 1)
-    old = ("#if FREEINK_DEVICE_EEGO_A4\n"
-           "  if (BoardConfig::ACTIVE.board == BoardConfig::Board::EegoA4) {\n"
-           "    // A4 power key")
-    need(s, old, "InputManager.cpp getDigitalState()")
-    return s.replace(old, (
-        "#if FREEINK_DEVICE_EEGO_A4 || FREEINK_DEVICE_UT37\n"
-        "  if (BoardConfig::ACTIVE.board == BoardConfig::Board::EegoA4 || BoardConfig::ACTIVE.board == BoardConfig::Board::Ut37) {\n"
-        "    // A4/UT37 power key"), 1)
-edit("freeink-sdk/libs/hardware/InputManager/src/InputManager.cpp", inputpolarity)
+    old = "#if FREEINK_DEVICE_WAVESHARE_EPAPER_397 || FREEINK_DEVICE_METALIO_EINK4\n// Keep the last positive USB Serial/JTAG SOF"
+    need(s, old, "HalGPIO.cpp SOF guard")
+    s = s.replace(old, old.replace("METALIO_EINK4", "METALIO_EINK4 || FREEINK_DEVICE_UT37"), 1)
+    anchor = "bool HalGPIO::isUsbConnected() const {\n"
+    need(s, anchor, "HalGPIO.cpp isUsbConnected")
+    s = s.replace(anchor, UT37_POWER.lstrip("\n") + anchor, 1)
+    s = s.replace(anchor, anchor + "#if FREEINK_DEVICE_UT37\n  return ut37ExternalPower();\n#endif\n", 1)
+    return s
+edit("lib/hal/HalGPIO.cpp", gpio_ut37)
+
+# 7) Pull-down from status bar band only
+import re
+def mim_ut37(s):
+    if "UT37 status-bar band" in s:
+        return s
+    pat = re.compile(r"fui::edgeSwipe\(\s*edge,\s*sx,\s*sy,\s*ex,\s*ey,\s*([^;]*?)\)\s*;", re.S)
+    m = pat.search(s)
+    if not m:
+        sys.exit("ANCHOR NOT FOUND: fui::edgeSwipe(edge, sx, sy, ex, ey, ...) in MappedInputManager.cpp")
+    new = ("fui::edgeSwipe(edge, sx, sy, ex, ey, " + m.group(1) + ",\n"
+           "      (edge == fui::ScreenEdge::Top) ? 44.0f / static_cast<float>(renderer.getScreenHeight()) : -1.0f);"
+           "  // UT37 status-bar band")
+    return s[:m.start()] + new + s[m.end():]
+edit("src/MappedInputManager.cpp", mim_ut37)
+
+# 8) WeRead: drop bottom-edge swipe-up -> home/back
+def weread_home_ut37(s):
+    if 'name.rfind("WeRead", 0) != 0' in s:
+        return s
+    old = "!currentActivity->isHomeActivity() && mappedInput.wasHomeGesture()"
+    need(s, old, "ActivityManager.cpp wasHomeGesture")
+    return s.replace(old, '!currentActivity->isHomeActivity() && currentActivity->name.rfind("WeRead", 0) != 0 &&\n        mappedInput.wasHomeGesture()', 1)
+edit("src/activities/ActivityManager.cpp", weread_home_ut37)

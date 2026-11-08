@@ -469,6 +469,7 @@ void SettingsActivity::groupUt37Settings(std::vector<SettingInfo>& pool) {
   take(systemSettings, action(SettingAction::Bluetooth));
   take(systemSettings, action(SettingAction::DateTime));
   take(systemSettings, name(StrId::STR_TIME_TO_SLEEP));
+  take(systemSettings, name(StrId::STR_STAY_AWAKE_ON_USB));
   take(systemSettings, action(SettingAction::Language));
   take(systemSettings, action(SettingAction::AppVisibility));
   take(systemSettings, name(StrId::STR_SHOW_HIDDEN_FILES));

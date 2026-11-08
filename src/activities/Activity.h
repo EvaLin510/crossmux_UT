@@ -50,7 +50,13 @@ class Activity {
   // transitions so no filesystem code races a raw SD-card owner.
   virtual bool requiresExclusiveStorageLoop() const { return false; }
   virtual bool isReaderActivity() const { return false; }
+#if FREEINK_DEVICE_UT37
+  // UT37: a link opened by the reader survives menus until auto-sleep ends it
+  // (new starts stay reader-only); WiFi/USB/exclusive storage still stop it.
+  virtual bool keepsBluetoothAlive() const { return true; }
+#else
   virtual bool keepsBluetoothAlive() const { return isReaderActivity(); }
+#endif
   virtual bool deferBluetoothStart() const { return false; }
   // Reading surfaces opt into output-polarity inversion; menus and overlays stay normal.
   virtual bool appliesNightMode() const { return false; }

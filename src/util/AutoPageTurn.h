@@ -14,6 +14,22 @@ inline constexpr uint8_t kRates[] = {1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30};
 inline constexpr int kRateCount = static_cast<int>(sizeof(kRates) / sizeof(kRates[0]));
 inline constexpr uint8_t kMaxRate = 30;
 
+// Rolling auto turn (UT37) reveals the next page this many lines per frame.
+// Each frame is a full fast refresh (~440 ms of panel power whatever changed),
+// so a 15-line page costs 3 roll frames + the turn instead of 14 + the turn.
+inline constexpr uint8_t kRollLinesPerStep = 4;
+
+// Lines of the next page to show `elapsed` ms into a `duration` ms interval:
+// line k appears at k/n of it, released in groups of kRollLinesPerStep.
+constexpr uint8_t rollLinesShown(const unsigned long elapsed, const unsigned long duration,
+                                 const unsigned long lines) {
+  return static_cast<uint8_t>(elapsed * lines / duration / kRollLinesPerStep * kRollLinesPerStep);
+}
+
+static_assert(rollLinesShown(0, 15000, 15) == 0 && rollLinesShown(3999, 15000, 15) == 0 &&
+                  rollLinesShown(4000, 15000, 15) == 4 && rollLinesShown(14999, 15000, 15) == 12,
+              "roll reveals four lines at a time");
+
 inline bool& activeFlag() {
   static bool active = false;
   return active;

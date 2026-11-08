@@ -38,6 +38,8 @@ class FrontlightPanelActivity final : public Activity, private UiAppHost {
   bool showAutoTurn = false;
   // SETTINGS.autoPageTurnRate when the panel opened; onExit saves a change.
   uint8_t autoTurnRateAtEnter = 0;
+  // Bluetooth host state the tile was last drawn for (standby label).
+  bool bluetoothRunningShown = false;
 
   // Quick-setting tiles, in grid order (2 columns): night mode, Bluetooth,
   // orientation, Settings. Fixed set — shown on touch boards, absent elsewhere.

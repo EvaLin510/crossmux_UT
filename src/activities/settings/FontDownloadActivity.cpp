@@ -208,7 +208,9 @@ void FontDownloadActivity::startDownload() {
 }
 
 void FontDownloadActivity::finishAutomaticFlow(const ExitRoute route) {
-  exitRoute_ = route;
+  // Launched from Home there is no book to resume; a declined prompt pops back
+  // to Home, and a finished download restarts there to load the new family.
+  exitRoute_ = startMode_ == StartMode::FromHome ? ExitRoute::Home : route;
   finish();
 }
 

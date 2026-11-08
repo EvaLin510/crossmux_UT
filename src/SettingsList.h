@@ -375,9 +375,6 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                            StrId::STR_FAKE_BOLD_HEAVY},
                           "fakeBold", StrId::STR_CAT_READER)
             .withTextSettings(),
-        SettingInfo::Toggle(StrId::STR_FOCUS_READING, &CrossPointSettings::focusReadingEnabled, "focusReadingEnabled",
-                            StrId::STR_CAT_READER)
-            .withTextSettings(),
         SettingInfo::Toggle(StrId::STR_READING_GUIDE_LINE, &CrossPointSettings::readingGuideLineEnabled,
                             "readingGuideLineEnabled", StrId::STR_CAT_READER)
             .withTextSettings(),
@@ -473,6 +470,8 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
             StrId::STR_TIME_TO_SLEEP, &CrossPointSettings::sleepTimeoutMinutes,
             {CrossPointSettings::MIN_SLEEP_TIMEOUT_MINUTES, CrossPointSettings::MAX_SLEEP_TIMEOUT_MINUTES, 1},
             "sleepTimeoutMinutes", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Toggle(StrId::STR_STAY_AWAKE_ON_USB, &CrossPointSettings::stayAwakeOnUsb, "stayAwakeOnUsb",
+                            StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_SHOW_HIDDEN_FILES, &CrossPointSettings::showHiddenFiles, "showHiddenFiles",
                             StrId::STR_CAT_SYSTEM),
 #if CROSSPOINT_CAP_SOUND_FEEDBACK

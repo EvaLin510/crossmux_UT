@@ -120,6 +120,7 @@ void FrontlightPanelActivity::onEnter() {
   // anywhere in the stack means a book is open underneath.
   showAutoTurn = activityManager.isReaderActivity();
   autoTurnRateAtEnter = SETTINGS.autoPageTurnRate;
+  bluetoothRunningShown = bleinput::isRunning();
 
   resetUi();
   app.on(ACTION_BRIGHTNESS, &FrontlightPanelActivity::onBrightnessEvent, this);
@@ -238,6 +239,7 @@ void FrontlightPanelActivity::runTile(const int idx) {
       } else {
         bleinput::stop();
       }
+      bluetoothRunningShown = bleinput::isRunning();
       requestUpdate();
       break;
     }
@@ -315,6 +317,14 @@ bool FrontlightPanelActivity::handleHomeGesture() {
 }
 
 void FrontlightPanelActivity::loop() {
+  // The Bluetooth lifecycle in main.cpp can start or stop the host under the
+  // open panel; repaint so the tile's standby line follows it.
+  const bool bluetoothRunning = bleinput::isRunning();
+  if (bluetoothRunning != bluetoothRunningShown) {
+    bluetoothRunningShown = bluetoothRunning;
+    requestUpdate();
+  }
+
   const auto touch = routeTouch(mappedInput, false, /*routeHeld=*/true);
   if (touch.routed) {
     if (app.invalidated()) requestUpdate();
@@ -652,7 +662,15 @@ void FrontlightPanelActivity::buildPanelScreen(UiScreen& screen) {
     // The orientation tile is labelled with just the current mode ("Portrait"):
     // the mode names say what the tile is about on their own.
     const char* orientLabel = I18N.get(kOrientNames[SETTINGS.orientation % 4]);
-    const char* labels[kTileCount] = {tr(STR_NIGHT_MODE), tr(STR_BLUETOOTH), orientLabel, tr(STR_SETTINGS_TITLE)};
+    // Bluetooth switched on but the host stopped (not opened from a book yet,
+    // WiFi, USB drive): still filled, with a second "Standby" line.
+    char bluetoothLabel[48];
+    const char* bluetoothText = tr(STR_BLUETOOTH);
+    if (SETTINGS.bluetoothEnabled && !bleinput::isRunning()) {
+      snprintf(bluetoothLabel, sizeof(bluetoothLabel), "%s\n%s", bluetoothText, tr(STR_BT_STANDBY));
+      bluetoothText = bluetoothLabel;
+    }
+    const char* labels[kTileCount] = {tr(STR_NIGHT_MODE), bluetoothText, orientLabel, tr(STR_SETTINGS_TITLE)};
     // A tile whose switch is on draws filled.
     const fui::State states[kTileCount] = {SETTINGS.screenInverted ? fui::StateChecked : fui::StateNormal,
                                            SETTINGS.bluetoothEnabled ? fui::StateChecked : fui::StateNormal,
@@ -669,6 +687,9 @@ void FrontlightPanelActivity::buildPanelScreen(UiScreen& screen) {
     gridProps.columns = kTileCols;
     gridProps.tileHeight = layout.tileHeight;
     gridProps.gap = layout.tileGap;
+    // The theme's tile text, allowed a second line for the Bluetooth standby label.
+    gridProps.text = theme.smallText;
+    gridProps.text.maxLines = 2;
     if constexpr (kCompactRows) {
       // Outer edges of the grid move in by kCompactBoxInset too.
       const fui::Rect area = screen.body();

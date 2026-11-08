@@ -23,6 +23,9 @@
 #if FREEINK_DEVICE_WAVESHARE_EPAPER_397 || FREEINK_DEVICE_METALIO_EINK4
 #include <soc/usb_serial_jtag_reg.h>
 #endif
+#if FREEINK_DEVICE_UT37
+#include <driver/usb_serial_jtag.h>
+#endif
 
 // Global HalGPIO instance
 HalGPIO gpio;
@@ -348,7 +351,7 @@ bool HalGPIO::verifyPowerButtonWakeup(const uint16_t requiredDurationMs, const b
   return inputMgr.getPowerButtonHeldTime() >= calibratedDuration;
 }
 
-#if FREEINK_DEVICE_WAVESHARE_EPAPER_397 || FREEINK_DEVICE_METALIO_EINK4
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397 || FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_UT37
 // Keep the last positive USB Serial/JTAG SOF result across nearby polls.
 static bool usbHostSofActive() {
   static uint32_t lastFrame = 0;
@@ -369,7 +372,60 @@ static bool usbHostSofActive() {
 }
 #endif
 
+#if FREEINK_DEVICE_UT37
+// UT37: SOF = host present (definite). Otherwise infer a charger from a slow rising battery
+// voltage: samples >=20 s apart, ring of 6, history dropped after a >120 s gap (sleep/wake),
+// so nothing can be reported until ~60 s of settled data exists.
+static bool ut37ExternalPower() {
+  if (usbHostSofActive()) return true;
+  constexpr int N = 6;
+  constexpr unsigned long STEP_MS = 20000, GAP_RESET_MS = 120000;
+  constexpr int RISE_MV = 25, STEP_DIP_MV = 5, UNPLUG_DIP_MV = 15;
+  static int mv[N];
+  static int count = 0;
+  static unsigned long lastSampleMs = 0, lastCallMs = 0;
+  static bool latched = false;
+  const unsigned long now = millis();
+  if (lastCallMs != 0 && now - lastCallMs > GAP_RESET_MS) {  // slept: divider still rebounding
+    count = 0;
+    latched = false;
+    lastSampleMs = 0;
+  }
+  lastCallMs = now;
+  if (lastSampleMs == 0 || now - lastSampleMs >= STEP_MS) {
+    int32_t sum = 0;
+    int ok = 0;
+    for (int i = 0; i < 16; ++i) {
+      const int v = analogReadMilliVolts(14);
+      if (v > 300) { sum += v; ++ok; }  // ADC2 returns ~0 while Wi-Fi owns it
+      delayMicroseconds(200);
+    }
+    if (ok >= 8) {
+      lastSampleMs = now;
+      const int battMv = static_cast<int>(sum / ok * 43 / 10);  // 330k/100k divider
+      if (count == N) {
+        for (int i = 1; i < N; ++i) mv[i - 1] = mv[i];
+        count = N - 1;
+      }
+      mv[count++] = battMv;
+      if (count >= 4) {
+        bool rising = (mv[count - 1] - mv[0]) >= RISE_MV;
+        for (int i = 1; i < count; ++i) rising = rising && (mv[i] - mv[i - 1]) >= -STEP_DIP_MV;
+        int peak = mv[0];
+        for (int i = 1; i < count; ++i) if (mv[i] > peak) peak = mv[i];
+        if (rising) latched = true;
+        else if (latched && peak - mv[count - 1] >= UNPLUG_DIP_MV) latched = false;
+      }
+    }
+  }
+  return latched;
+}
+#endif
+
 bool HalGPIO::isUsbConnected() const {
+#if FREEINK_DEVICE_UT37
+  return ut37ExternalPower();
+#endif
   if (deviceIsX3()) {
     // X3: infer USB/charging via BQ27220 Current() register (0x0C, signed mA).
     // Positive current means charging.
@@ -402,6 +458,16 @@ bool HalGPIO::isUsbConnected() const {
   // Caveat: charge termination at 100% reads as "not connected".
   static const BatteryMonitor battery;
   return battery.isCharging();
+}
+
+bool HalGPIO::isUsbHostConnected() const {
+#if FREEINK_DEVICE_UT37
+  // UT37 infers a charger from the battery trend; only USB Serial/JTAG frames
+  // prove a computer.
+  return usb_serial_jtag_is_connected();
+#else
+  return isUsbConnected();
+#endif
 }
 
 bool HalGPIO::coldBootImpliesPowerButton() const {

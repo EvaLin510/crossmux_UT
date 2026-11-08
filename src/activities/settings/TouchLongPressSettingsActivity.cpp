@@ -21,13 +21,15 @@ const StrId actionNames[CrossPointSettings::TOUCH_LONG_PRESS_ACTION_COUNT] = {
     StrId::STR_FOOTNOTES,          StrId::STR_MENU_BOOKMARK_LIST, StrId::STR_MENU_ADD_REMOVE_BOOKMARK,
     StrId::STR_TEXT_SETTINGS,      StrId::STR_MENU_DICT_LOOKUP,  StrId::STR_AUTO_TURN,
     StrId::STR_GO_TO_PERCENT,      StrId::STR_GO_HOME_BUTTON,    StrId::STR_SYNC_PROGRESS,
+    StrId::STR_KEY_BACK,
 };
 static_assert(sizeof(actionNames) / sizeof(actionNames[0]) == CrossPointSettings::TOUCH_LONG_PRESS_ACTION_COUNT,
               "one label per TOUCH_LONG_PRESS_ACTION");
 
 // Picker rows: every action except the retired TLP_FOOTNOTES.
 const uint8_t pickerActions[TouchLongPressSettingsActivity::OPTION_COUNT] = {
-    CrossPointSettings::TLP_NONE,          CrossPointSettings::TLP_READER_MENU,
+    CrossPointSettings::TLP_NONE,          CrossPointSettings::TLP_BACK,
+    CrossPointSettings::TLP_READER_MENU,
     CrossPointSettings::TLP_TOC,           CrossPointSettings::TLP_BOOKMARK_LIST,
     CrossPointSettings::TLP_TOGGLE_BOOKMARK, CrossPointSettings::TLP_TEXT_SETTINGS,
     CrossPointSettings::TLP_DICTIONARY,    CrossPointSettings::TLP_AUTO_TURN,
@@ -35,7 +37,7 @@ const uint8_t pickerActions[TouchLongPressSettingsActivity::OPTION_COUNT] = {
     CrossPointSettings::TLP_SYNC,
 };
 const StrId pickerNames[TouchLongPressSettingsActivity::OPTION_COUNT] = {
-    StrId::STR_NONE_OPT,           StrId::STR_READER_MENU,       StrId::STR_MENU_TOC,
+    StrId::STR_NONE_OPT,           StrId::STR_KEY_BACK,          StrId::STR_READER_MENU,       StrId::STR_MENU_TOC,
     StrId::STR_MENU_BOOKMARK_LIST, StrId::STR_MENU_ADD_REMOVE_BOOKMARK, StrId::STR_TEXT_SETTINGS,
     StrId::STR_MENU_DICT_LOOKUP,   StrId::STR_AUTO_TURN,         StrId::STR_GO_TO_PERCENT,
     StrId::STR_GO_HOME_BUTTON,     StrId::STR_SYNC_PROGRESS,

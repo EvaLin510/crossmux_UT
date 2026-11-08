@@ -36,6 +36,8 @@ class ReaderActivity : public Activity {
   virtual void onEndOfBookRendered() {}
 
   bool handleBackNavigation();
+  /** Where a short Back press leaves the book: home, or the file browser with backShortToFileBrowser. */
+  void goBackShort();
   /** True while the end-of-book suggestion menu is on screen and owning input. */
   bool endOfBookMenuActive() const;
   bool handleEndOfBookMenu(bool suppressConfirmRelease = false);

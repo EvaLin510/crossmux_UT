@@ -23,21 +23,11 @@
 // unaligned multi-byte access):
 //   uint16_t textOff[wordCount]        byte offset of word i's text in text[]
 //   int16_t  xpos[wordCount]
-//   uint16_t focusSuffixX[wordCount]   present only when focusPresent
 //   uint8_t  styles[wordCount]
-//   uint8_t  focusBoundary[wordCount]  present only when focusPresent
 //   char     text[textBytes]           all words back to back, NUL-terminated
 //
 // Each word is stored NUL-terminated so render() can hand `text + textOff[i]`
 // straight to C APIs (drawText) with no std::string materialization.
-//
-// Focus split semantics (unchanged from the vector layout): boundary N > 0
-// means the first N bytes of word i render bold, the remainder in the base
-// style. N is bounded to 9 codepoints (<= 36 UTF-8 bytes) by the clamp in
-// ParsedText::addWord. focusSuffixX is the pre-computed pixel offset from the
-// word start to the regular suffix. Both arrays are omitted from the arena
-// entirely when no word on the line has a split (zero per-word RAM cost when
-// focus reading is disabled).
 class TextBlock final : public Block {
  public:
   struct LinkSpan {
@@ -51,7 +41,6 @@ class TextBlock final : public Block {
   BlockStyle blockStyle;
   uint16_t numWords = 0;
   uint16_t textBytes = 0;  // total size of the text region, including NULs
-  bool focusPresent = false;
   bool isValid = true;
   // The ONLY allocation: makeUniqueNoThrow, so OOM yields an invalid block
   // instead of abort() (bare new is not nothrow with -fno-exceptions).
@@ -60,9 +49,7 @@ class TextBlock final : public Block {
   // 16-bit bases sit at even offsets, so direct dereference is alignment-safe.
   const uint16_t* textOffArr = nullptr;
   const int16_t* xposArr = nullptr;
-  const uint16_t* focusSuffixXArr = nullptr;  // null when !focusPresent
   const uint8_t* stylesArr = nullptr;
-  const uint8_t* focusBoundaryArr = nullptr;  // null when !focusPresent
   const char* textArr = nullptr;
   std::vector<std::string> rubyTexts;
   // Layout-only metadata. ChapterHtmlSlimParser moves it into Page::links
@@ -70,7 +57,7 @@ class TextBlock final : public Block {
   std::vector<LinkSpan> linkSpans;
 
   TextBlock() = default;  // deserialize() fills the fields directly
-  static size_t arenaSize(uint16_t wordCount, bool hasFocus, uint16_t textBytes);
+  static size_t arenaSize(uint16_t wordCount, uint16_t textBytes);
   void bindArenaPointers();
 
  public:
@@ -78,8 +65,7 @@ class TextBlock final : public Block {
   // vectors die with the caller. On arena OOM the block is empty and valid()
   // is false -- callers must check and fail the line instead of using it.
   explicit TextBlock(const std::vector<std::string>& words, const std::vector<int16_t>& wordXpos,
-                     const std::vector<EpdFontFamily::Style>& wordStyles, const std::vector<uint8_t>& focusBoundary,
-                     const std::vector<uint16_t>& focusSuffixX, const BlockStyle& blockStyle = BlockStyle(),
+                     const std::vector<EpdFontFamily::Style>& wordStyles, const BlockStyle& blockStyle = BlockStyle(),
                      std::vector<std::string> rubyTexts = {}, std::vector<LinkSpan> linkSpans = {});
   ~TextBlock() override = default;
   TextBlock(const TextBlock&) = delete;
@@ -98,8 +84,6 @@ class TextBlock final : public Block {
   }
   int16_t wordXpos(const uint16_t i) const { return xposArr[i]; }
   EpdFontFamily::Style wordStyle(const uint16_t i) const { return static_cast<EpdFontFamily::Style>(stylesArr[i]); }
-  uint8_t focusBoundary(const uint16_t i) const { return focusPresent ? focusBoundaryArr[i] : 0; }
-  uint16_t focusSuffixX(const uint16_t i) const { return focusPresent ? focusSuffixXArr[i] : 0; }
   bool hasRuby() const;
   int getRubyShift(int ascender) const { return hasRuby() ? (ascender / 2) : 0; }
   const std::vector<std::string>& getRubyTexts() const { return rubyTexts; }

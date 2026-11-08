@@ -31,6 +31,8 @@ bool HalStorage::begin() { return SDCard.begin(); }
 
 bool HalStorage::ready() const { return SDCard.ready(); }
 
+bool HalStorage::bitLockerDetected() const { return SDCard.bitLockerDetected(); }
+
 // For the rest of the methods, we acquire the mutex to ensure thread safety
 
 HalStorage::StorageLock::StorageLock() {

@@ -18,6 +18,7 @@
 #endif
 
 #include "HalGPIO.h"
+#include "HalSystem.h"
 #include "Waveshare397Power.h"
 
 #if FREEINK_DEVICE_UT37
@@ -100,6 +101,7 @@ void HalPowerManager::setPowerSaving(bool enabled) {
     const int targetFrequency = targetLowPower ? LOW_POWER_FREQ : normalFreq;
     if (setCpuFrequencyMhz(targetFrequency)) {
       isLowPower = targetLowPower;
+      HalSystem::noteCpuFrequency(getCpuFrequencyMhz());
       LOG_DBG("PWR", "CPU frequency now %u MHz", getCpuFrequencyMhz());
     } else {
       LOG_DBG("PWR", "Failed to set CPU frequency = %d MHz", targetFrequency);
@@ -231,7 +233,12 @@ HalPowerManager::IdleWake HalPowerManager::idleLightSleep(const uint32_t maxMs) 
   if (armed) armed = esp_sleep_enable_gpio_wakeup() == ESP_OK;
   // Don't sleep if a wake condition is already true (finger down / key held).
   const bool wakeNow = (touchIrq >= 0 && gpio_get_level(touchIrq) == 0) || (sideKey >= 0 && gpio_get_level(sideKey) == 1);
-  const bool slept = armed && !wakeNow && esp_light_sleep_start() == ESP_OK;
+  bool slept = false;
+  if (armed && !wakeNow) {
+    HalSystem::noteLightSleep(true);
+    slept = esp_light_sleep_start() == ESP_OK;
+    HalSystem::noteLightSleep(false);
+  }
 
   if (touchIrq >= 0) gpio_wakeup_disable(touchIrq);
   if (sideKey >= 0) gpio_wakeup_disable(sideKey);

@@ -15,7 +15,8 @@
 // parsed and the activity holds no heap beyond the HTTP download itself.
 class FontDownloadActivity final : public UiListActivity {
  public:
-  enum class StartMode : uint8_t { Normal, ResumeFontLoadError };
+  // FromHome: offered at boot when the family is missing; every exit returns Home.
+  enum class StartMode : uint8_t { Normal, ResumeFontLoadError, FromHome };
 
   explicit FontDownloadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                 StartMode startMode = StartMode::Normal);

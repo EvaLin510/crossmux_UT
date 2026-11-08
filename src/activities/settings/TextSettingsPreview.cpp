@@ -49,10 +49,9 @@ void relayout(PreviewLayout& layout, const GfxRenderer& renderer, int fontId, in
 #endif
   style.textAlignDefined = true;  // honor the user's choice; RTL auto-detected from text
 
-  ParsedText parsed(SETTINGS.extraParagraphSpacing != 0, SETTINGS.hyphenationEnabled != 0,
-                    SETTINGS.focusReadingEnabled != 0, style);
+  ParsedText parsed(SETTINGS.extraParagraphSpacing != 0, SETTINGS.hyphenationEnabled != 0, style);
 
-  // Feed one space-separated word at a time; addWord handles NFC/CJK/RTL/focus splitting
+  // Feed one space-separated word at a time; addWord handles NFC/CJK/RTL splitting
   const char* text = I18N.get(StrId::STR_FONT_PREVIEW_TEXT);
   std::string word;
   word.reserve(strlen(text));
@@ -105,7 +104,7 @@ void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previ
   const int textWidth = width - 2 * SETTINGS.screenMargin;
   if (textWidth <= 0) return;
 
-  const float compression = SETTINGS.getReaderLineCompression();
+  const float compression = SETTINGS.getReaderLineCompression(renderer);
   const int lineAdvance = std::max(1, renderer.getLineHeight(fontId, compression));
   const int paragraphGap = SETTINGS.extraParagraphSpacing ? lineAdvance / 2 : 0;
   const int textTop = top + previewPadding;
@@ -116,7 +115,7 @@ void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previ
 
   // Re-lay-out (and re-prewarm glyphs) only when a layout-affecting setting or the
   // geometry changed; else reuse the cache. The prewarm inputs are (fontId, constant
-  // sample text, styleMask<-focusReading), all of which are key fields, so a matching
+  // sample text, fixed styleMask), all of which are key fields, so a matching
   // key means an identical prewarm call. This relies on nothing else evicting the SD
   // glyph cache while this activity is up — true today: the only evictor is
   // FontCacheManager::PrewarmScope, used solely by the reader/dictionary activities.
@@ -128,7 +127,6 @@ void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previ
                        .lineCompression = compression,
                        .alignment = SETTINGS.paragraphAlignment,
                        .extraParagraphSpacing = SETTINGS.extraParagraphSpacing != 0,
-                       .focusReading = SETTINGS.focusReadingEnabled != 0,
                        .hyphenation = SETTINGS.hyphenationEnabled != 0};
   if (key != layout.key) {
     if (auto* fcm = renderer.getFontCacheManager()) {
@@ -139,7 +137,7 @@ void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previ
   }
 
   // Draw the sample twice so the paragraph gap is visible
-  GfxRenderer::SyntheticBoldScope syntheticBold(renderer, SETTINGS.fakeBold);
+  GfxRenderer::SyntheticBoldScope syntheticBold(renderer, SETTINGS.fakeBold, /*body=*/true);
   int y = textTop;
   for (int paragraph = 0; paragraph < 2; paragraph++) {
     for (const auto& line : layout.lines) {

@@ -81,6 +81,8 @@ class GfxRenderer {
   Orientation orientation;
   bool fadingFix;
   mutable uint8_t syntheticBoldPixels = 0;
+  // Reader body mode: regular text is widened too, bold text one pixel more.
+  mutable bool syntheticBoldBody = false;
   uint8_t* frameBuffer = nullptr;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
@@ -405,19 +407,29 @@ class GfxRenderer {
   // Text
   // Page-local guard for synthetic bold. Restores the previous renderer state
   // so EPUB content cannot leak the effect into status bars or other UI.
+  //
+  // Default (UI) mode widens only BOLD-styled text, drawn with the regular face.
+  // Body mode (reader text) widens every glyph by `pixels`, BOLD-styled text by
+  // one pixel more, and gives BOLD text 1 px when `pixels` is 0 but the family
+  // has no bold face, so emphasis never silently renders as regular.
   class SyntheticBoldScope {
    public:
-    SyntheticBoldScope(const GfxRenderer& renderer, const uint8_t pixels)
-        : renderer_(renderer), previous_(renderer.syntheticBoldPixels) {
+    SyntheticBoldScope(const GfxRenderer& renderer, const uint8_t pixels, const bool body = false)
+        : renderer_(renderer), previous_(renderer.syntheticBoldPixels), previousBody_(renderer.syntheticBoldBody) {
       renderer_.syntheticBoldPixels = pixels <= MAX_SYNTHETIC_BOLD_PIXELS ? pixels : MAX_SYNTHETIC_BOLD_PIXELS;
+      renderer_.syntheticBoldBody = body;
     }
-    ~SyntheticBoldScope() { renderer_.syntheticBoldPixels = previous_; }
+    ~SyntheticBoldScope() {
+      renderer_.syntheticBoldPixels = previous_;
+      renderer_.syntheticBoldBody = previousBody_;
+    }
     SyntheticBoldScope(const SyntheticBoldScope&) = delete;
     SyntheticBoldScope& operator=(const SyntheticBoldScope&) = delete;
 
    private:
     const GfxRenderer& renderer_;
     uint8_t previous_;
+    bool previousBody_;
   };
 
   int getTextWidth(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR,

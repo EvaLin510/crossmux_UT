@@ -636,6 +636,26 @@ void continueChineseFontInstall(const uint8_t expectedPointSize) {
   activityManager.pushActivity(std::move(notice));
   activityManager.loop();
 }
+
+#if FREEINK_DEVICE_UT37
+// Cold boot to Home with no WQYZhengHei family on the card: offer the download
+// instead of waiting for the reader to hit a glyph the built-in subset lacks.
+void offerChineseFontDownloadIfMissing() {
+  if (FontDownloadActivity::wasChineseFontPromptShownThisBoot()) return;
+  if (sdFontSystem.registry().findFamily(SdCardFontSystem::DOWNLOADABLE_CHINESE_FAMILY)) return;
+
+  LOG_INF("FONT", "%s not installed; offering download from Home", SdCardFontSystem::DOWNLOADABLE_CHINESE_FAMILY);
+  auto downloader =
+      makeUniqueNoThrow<FontDownloadActivity>(renderer, mappedInputManager, FontDownloadActivity::StartMode::FromHome);
+  if (!downloader) {
+    LOG_ERR("FONT", "OOM allocating FontDownloadActivity (%zu bytes)", sizeof(FontDownloadActivity));
+    return;
+  }
+  activityManager.loop();  // land the queued Home replacement under the prompt
+  activityManager.pushActivity(std::move(downloader));
+  activityManager.loop();
+}
+#endif
 #endif
 
 void setup() {
@@ -726,8 +746,21 @@ void setup() {
   // We need 6 open files concurrently when parsing a new chapter
   if (!Storage.begin()) {
     LOG_ERR("MAIN", "SD card initialization failed");
+#if FREEINK_DEVICE_UT37
+    {  // UT37 diag: capture SD failure details over USB CDC
+      const unsigned long diagStart = millis();
+      while (millis() - diagStart < 6000) delay(10);
+      delay(300);
+      esp_rom_printf("[UT37] SD gate GPIO%d level=%d (powerActiveHigh=%d)\n", (int)BoardConfig::ACTIVE.sd.powerEnable,
+                    digitalRead(BoardConfig::ACTIVE.sd.powerEnable), (int)BoardConfig::ACTIVE.sd.powerActiveHigh);
+      const bool retryOk = Storage.begin();
+      esp_rom_printf("[UT37] SD retry %s\n", retryOk ? "OK" : "FAILED");
+    }
+#endif
     const bool fontsReady = setupDisplayAndFonts(isSilentReboot);
-    activityManager.goToFullScreenMessage("SD card error", EpdFontFamily::BOLD);
+    // Settings live on the card, so the message uses the default language.
+    activityManager.goToFullScreenMessage(Storage.bitLockerDetected() ? tr(STR_SD_BITLOCKER) : "SD card error",
+                                          EpdFontFamily::BOLD);
     activityManager.requestUpdateAndWait();
     if (otaPendingAtBoot && fontsReady) {
       if (HalOtaSlot::confirmRunningImage()) {
@@ -929,6 +962,10 @@ void setup() {
     // crashed (indicated by readerActivityLoadCount > 0)
     if (needsWakeRefresh) renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
     activityManager.goHome();
+#if FREEINK_DEVICE_UT37 && defined(ENABLE_CHINESE_VERSION)
+    // Cold boot only: a deep-sleep wake also lands here and must not re-prompt.
+    if (!isSleepWake) offerChineseFontDownloadIfMissing();
+#endif
   } else {
     // Clear app state to avoid getting into a boot loop if the epub doesn't load
     const auto path = APP_STATE.openEpubPath;
@@ -1040,8 +1077,12 @@ void loop() {
 
   // Check for any real user activity (button, touch, or tilt).
   static unsigned long lastActivityTime = millis();
+  // Stay-awake-on-USB only holds a device someone is using: a cold boot the
+  // cable itself caused (a drained battery) still auto-sleeps and charges.
+  static bool userActiveSinceBoot = false;
   if (mappedInputManager.wasAnyPressed() || mappedInputManager.wasAnyReleased() || gpio.wasTouchActivity() ||
       halTiltSensor.hadActivity()) {
+    userActiveSinceBoot = true;
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
   }
@@ -1066,8 +1107,12 @@ void loop() {
   }
 #endif
 
+  // Unplugging restarts the inactivity clock, so a device left idle on USB
+  // does not fall asleep the moment the cable comes out.
+  if (gpio.wasUsbStateChanged()) lastActivityTime = millis();
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
-  if (sleepTimeoutMs > 0 && !activityManager.preventAutoSleep() && millis() - lastActivityTime >= sleepTimeoutMs) {
+  if (sleepTimeoutMs > 0 && !activityManager.preventAutoSleep() && millis() - lastActivityTime >= sleepTimeoutMs &&
+      !(SETTINGS.stayAwakeOnUsb && userActiveSinceBoot && gpio.isUsbHostConnected())) {
     LOG_DBG("SLP", "Auto-sleep triggered after %lu ms of inactivity", sleepTimeoutMs);
     enterDeepSleep(true);
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start

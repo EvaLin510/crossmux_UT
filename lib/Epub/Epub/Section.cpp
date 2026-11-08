@@ -36,6 +36,7 @@ namespace {
 //   62 / 63 - touch-link capability in the render spec
 //   64 / 65 - bounded no-PSRAM soft-flush windows
 //   66 / 67 - content-sniffed image decoders and the img2_ image cache prefix
+//   68 / 69 - Focus Reading removed: no header flag, no per-word TextBlock split arrays
 //
 // The 66/67 bump is not optional alongside the img2_ prefix in imageBasePath
 // below: recognising an image by its content instead of its href extension means
@@ -44,9 +45,9 @@ namespace {
 // the wrong picture, because ImageBlock::ensureExtracted() accepts whatever file
 // already sits at the path (and its .pxc pixel cache) without checking the source.
 #ifdef ENABLE_CHINESE_VERSION
-constexpr uint8_t SECTION_FILE_VERSION = 67;
+constexpr uint8_t SECTION_FILE_VERSION = 69;
 #else
-constexpr uint8_t SECTION_FILE_VERSION = 66;
+constexpr uint8_t SECTION_FILE_VERSION = 68;
 #endif
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
@@ -67,7 +68,7 @@ constexpr uint8_t SECTION_FILE_INCOMPLETE_VERSION = 0;
 constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xFE - (SECTION_FILE_VERSION - 28);
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
-                                 sizeof(uint8_t) + sizeof(bool) + sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) +
+                                 sizeof(uint8_t) + sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) +
                                  sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
 // Called only between layout/render operations; no borrowed glyph pointer is live.
 void reclaimLayoutCaches(GfxRenderer& renderer, const char* stage) {
@@ -130,8 +131,7 @@ void Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
                                    sizeof(spec.extraParagraphSpacing) + sizeof(spec.paragraphAlignment) +
                                    sizeof(spec.viewportWidth) + sizeof(spec.viewportHeight) + sizeof(pageCount) +
                                    sizeof(spec.hyphenationEnabled) + sizeof(spec.embeddedStyle) +
-                                   sizeof(spec.imageRendering) + sizeof(spec.focusReadingEnabled) +
-                                   sizeof(spec.collectTouchLinks) + sizeof(uint32_t) + sizeof(uint32_t) +
+                                   sizeof(spec.imageRendering) + sizeof(spec.collectTouchLinks) + sizeof(uint32_t) + sizeof(uint32_t) +
                                    sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t),
                 "Header size mismatch");
   // Written as the incomplete sentinel; finalizeBuild() patches it to
@@ -146,7 +146,6 @@ void Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
   serialization::writePod(file, spec.hyphenationEnabled);
   serialization::writePod(file, spec.embeddedStyle);
   serialization::writePod(file, spec.imageRendering);
-  serialization::writePod(file, spec.focusReadingEnabled);
   serialization::writePod(file, spec.collectTouchLinks);
   serialization::writePod(file, pageCount);  // Placeholder for page count (will be initially 0, patched later)
   serialization::writePod(file, static_cast<uint32_t>(0));  // Placeholder for LUT offset (patched later)
@@ -185,7 +184,6 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     bool fileHyphenationEnabled = false;
     bool fileEmbeddedStyle = false;
     uint8_t fileImageRendering = 0;
-    bool fileFocusReadingEnabled = false;
     bool fileCollectTouchLinks = false;
     const bool headerValid =
         serialization::readPod(file, fileFontId) && serialization::readPod(file, fileLineCompression) &&
@@ -193,14 +191,13 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
         serialization::readPod(file, fileParagraphAlignment) && serialization::readPod(file, fileViewportWidth) &&
         serialization::readPod(file, fileViewportHeight) && serialization::readPod(file, fileHyphenationEnabled) &&
         serialization::readPod(file, fileEmbeddedStyle) && serialization::readPod(file, fileImageRendering) &&
-        serialization::readPod(file, fileFocusReadingEnabled) && serialization::readPod(file, fileCollectTouchLinks);
+        serialization::readPod(file, fileCollectTouchLinks);
 
     if (!headerValid || spec.fontId != fileFontId || spec.lineCompression != fileLineCompression ||
         spec.extraParagraphSpacing != fileExtraParagraphSpacing || spec.paragraphAlignment != fileParagraphAlignment ||
         spec.viewportWidth != fileViewportWidth || spec.viewportHeight != fileViewportHeight ||
         spec.hyphenationEnabled != fileHyphenationEnabled || spec.embeddedStyle != fileEmbeddedStyle ||
-        spec.imageRendering != fileImageRendering || spec.focusReadingEnabled != fileFocusReadingEnabled ||
-        spec.collectTouchLinks != fileCollectTouchLinks) {
+        spec.imageRendering != fileImageRendering || spec.collectTouchLinks != fileCollectTouchLinks) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: Parameters do not match");
       clearCache();
@@ -453,7 +450,6 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
   ctx->parser = makeUniqueNoThrow<ChapterHtmlSlimParser>(
       epub, ctxPtr->parsePath, renderer, spec.fontId, spec.lineCompression, spec.extraParagraphSpacing,
       spec.paragraphAlignment, spec.viewportWidth, spec.viewportHeight, spec.hyphenationEnabled,
-      spec.focusReadingEnabled,
       [this, ctxPtr](std::unique_ptr<Page> page, const uint16_t paragraphIndex, const uint16_t listItemIndex,
                      const uint32_t visibleTextOffset) {
         const uint32_t position = this->onPageComplete(std::move(page));

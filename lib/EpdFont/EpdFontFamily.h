@@ -33,6 +33,8 @@ class EpdFontFamily {
   bool hasCodepoint(uint32_t cp, Style style = REGULAR) const;
   int8_t getKerning(uint32_t leftCp, uint32_t rightCp, Style style = REGULAR) const;
   uint32_t applyLigatures(uint32_t cp, const char*& text, Style style = REGULAR) const;
+  /// False when BOLD requests fall back to the regular face (see getFont).
+  bool hasBoldFace() const { return bold != nullptr; }
   static constexpr bool hasTextDecoration(const Style style) {
     return (static_cast<uint8_t>(style) & TEXT_DECORATION_MASK) != 0;
   }

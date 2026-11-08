@@ -5,7 +5,7 @@
 // engine. Section-cache validation keys on every field: a section file built
 // with a different spec is discarded and rebuilt.
 //
-// Build one via CrossPointSettings::readerRenderSpec(width, height), which
+// Build one via CrossPointSettings::readerRenderSpec(renderer, width, height), which
 // fills settings and viewport fields. The reader supplies collectTouchLinks
 // from the input device and applies any session-only CSS fallback. Taking
 // the viewport as arguments is what keeps a spec from
@@ -21,6 +21,6 @@ struct ReaderRenderSpec {
   bool hyphenationEnabled = false;
   bool embeddedStyle = true;
   uint8_t imageRendering = 0;
-  bool focusReadingEnabled = false;
   bool collectTouchLinks = false;
+  bool operator==(const ReaderRenderSpec&) const = default;
 };

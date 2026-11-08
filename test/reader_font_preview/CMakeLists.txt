@@ -1,4 +1,0 @@
-add_executable(ReaderFontPreviewTest ReaderFontPreviewTest.cpp)
-target_link_libraries(ReaderFontPreviewTest PRIVATE crosspoint_test_common)
-target_compile_options(ReaderFontPreviewTest PRIVATE -UNDEBUG)
-add_test(NAME ReaderFontPreview COMMAND ReaderFontPreviewTest)

@@ -31,6 +31,8 @@ class HalStorage {
   HalStorage();
   bool begin();
   bool ready() const;
+  // After a failed begin(): the card holds a BitLocker-encrypted volume.
+  bool bitLockerDetected() const;
   bool getSpace(uint64_t& totalBytes, uint64_t& freeBytes);
   // Stop the SD card for deep sleep: unmount, stop the SDMMC host, and release
   // the bus pads (no-op on SPI boards). Call only after all file users have

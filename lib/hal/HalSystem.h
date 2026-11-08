@@ -35,4 +35,12 @@ HeapInfo getHeapInfo();
 
 std::string getPanicInfo(bool full = false);
 bool isRebootFromPanic();
+
+// Crash-report context, kept in RTC memory across a panic reset and read back
+// once by begin(). Cheap enough to call on every clock change or sleep.
+void noteCpuFrequency(uint32_t mhz);
+void noteLightSleep(bool asleep);
+// Local-time offset for the report's crash time; settings live on the SD card,
+// which is not loaded yet when the report is written.
+void rememberUtcOffsetSeconds(int32_t offsetSeconds);
 }  // namespace HalSystem

@@ -701,10 +701,25 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     return;
   }
 
-  const uint8_t activeSyntheticBoldPixels =
-      syntheticBoldPixels != 0 && (style & EpdFontFamily::BOLD) != 0 ? syntheticBoldPixels : 0;
+  const bool boldStyle = (style & EpdFontFamily::BOLD) != 0;
+  uint8_t activeSyntheticBoldPixels = 0;
+  bool syntheticBoldReplacesFace = false;
+  if (boldStyle && syntheticBoldPixels != 0) {
+    activeSyntheticBoldPixels =
+        syntheticBoldBody ? std::min<uint8_t>(syntheticBoldPixels + 1, MAX_SYNTHETIC_BOLD_PIXELS) : syntheticBoldPixels;
+    syntheticBoldReplacesFace = true;
+  } else if (boldStyle && syntheticBoldBody) {
+    // Off level: keep a real bold face, but never let emphasis fall back to plain regular.
+    const auto familyIt = fontMap.find(fontId);
+    if (familyIt != fontMap.end() && !familyIt->second.hasBoldFace()) {
+      activeSyntheticBoldPixels = 1;
+      syntheticBoldReplacesFace = true;
+    }
+  } else if (syntheticBoldBody) {
+    activeSyntheticBoldPixels = syntheticBoldPixels;
+  }
   const auto renderStyle =
-      activeSyntheticBoldPixels != 0
+      syntheticBoldReplacesFace
           ? static_cast<EpdFontFamily::Style>(static_cast<uint8_t>(style) & ~static_cast<uint8_t>(EpdFontFamily::BOLD))
           : style;
 

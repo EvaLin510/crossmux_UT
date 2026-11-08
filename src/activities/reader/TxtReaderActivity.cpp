@@ -153,6 +153,7 @@ bool TxtReaderActivity::handleFormatInput() {
     openReaderMenu();
     return true;
   }
+  catchUpDirectIndex();
   return false;
 }
 
@@ -289,6 +290,9 @@ void TxtReaderActivity::runTouchLongPress(const uint8_t action) {
     case CrossPointSettings::TLP_SYNC:
       launchKOReaderSync();
       break;
+    case CrossPointSettings::TLP_BACK:
+      goBackShort();
+      break;
     case CrossPointSettings::TLP_NONE:
     default:
       break;
@@ -402,7 +406,6 @@ void TxtReaderActivity::openDictionaryWordSelect() {
     // Load the page's glyph advances once rather than per measured token.
     renderer.ensureSdCardFontReady(cachedFontId, pageText.c_str(), 0x01);
 
-    const int lineHeight = renderer.getLineHeight(cachedFontId);
     std::vector<std::string> words;
     std::vector<int16_t> wordX;
     std::vector<EpdFontFamily::Style> styles;
@@ -442,15 +445,14 @@ void TxtReaderActivity::openDictionaryWordSelect() {
         i = end;
       }
       if (!words.empty()) {
-        auto block =
-            makeUniqueNoThrow<TextBlock>(words, wordX, styles, std::vector<uint8_t>{}, std::vector<uint16_t>{});
+        auto block = makeUniqueNoThrow<TextBlock>(words, wordX, styles);
         if (block && block->valid()) {
           auto pageLine = makeUniqueNoThrow<PageLine>(std::move(block), static_cast<int16_t>(lineStartX(line)),
                                                       static_cast<int16_t>(y));
           if (pageLine) page->elements.push_back(std::move(pageLine));
         }
       }
-      y += lineHeight;
+      y += lineAdvance;
     }
   }
 
@@ -586,10 +588,10 @@ bool TxtReaderActivity::handleAutoPageTurn() {
   }
 #if FREEINK_DEVICE_UT37
   if (rollSupported) {
-    // Line k of the next page appears at k/n of the interval.
+    // Line k of the next page appears at k/n of the interval, four at a time.
     const unsigned long lines =
         rollLineCount > 0 ? rollLineCount : static_cast<unsigned long>(std::max(1, linesPerPage));
-    const auto want = static_cast<uint8_t>(elapsed * lines / duration);
+    const auto want = auto_page_turn::rollLinesShown(elapsed, duration, lines);
     if (want > rollStep) {
       rollStep = want;
       requestUpdate();
@@ -749,14 +751,14 @@ void TxtReaderActivity::initializeReader() {
 
   viewportWidth = renderer.getScreenWidth() - cachedOrientedMarginLeft - cachedOrientedMarginRight;
   const int viewportHeight = renderer.getScreenHeight() - cachedOrientedMarginTop - cachedOrientedMarginBottom;
-  const int lineHeight = renderer.getLineHeight(cachedFontId);
+  lineAdvance = std::max(1, renderer.getLineHeight(cachedFontId, SETTINGS.getReaderLineCompression(renderer)));
   if (SETTINGS.extraParagraphSpacing == 0) {
     const int cjkAdvance = renderer.getTextAdvanceX(cachedFontId, "我", EpdFontFamily::REGULAR);
     paragraphIndentWidth =
         cjkAdvance > 0 ? cjkAdvance * 2 : renderer.getSpaceWidth(cachedFontId, EpdFontFamily::REGULAR) * 3;
   }
 
-  linesPerPage = viewportHeight / lineHeight;
+  linesPerPage = viewportHeight / lineAdvance;
   if (linesPerPage < 1) linesPerPage = 1;
   currentPageLines.reserve(linesPerPage);
 
@@ -849,7 +851,9 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<TxtLine>& ou
 
   // Parse lines from buffer
   size_t pos = 0;
-  const bool compactParagraphs = SETTINGS.extraParagraphSpacing == 0;
+  // Spacing on: one empty row between paragraphs, no first-line indent (as the EPUB layout).
+  // Spacing off: paragraphs run together and the first line is indented.
+  const bool paragraphGaps = SETTINGS.extraParagraphSpacing != 0;
   const bool naturalAlignment = cachedParagraphAlignment == CrossPointSettings::LEFT_ALIGN ||
                                 cachedParagraphAlignment == CrossPointSettings::JUSTIFIED;
   txt_paragraph::State paragraphState(offset == 0);
@@ -880,14 +884,23 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<TxtLine>& ou
     size_t lineBytePos = 0;
     bool indentFirstVisualLine = false;
 
-    if (compactParagraphs) {
+    {
       const auto info = txt_paragraph::analyzeLine(buffer + pos, displayLen);
       if (info.kind == txt_paragraph::LineKind::Blank) {
         paragraphState.noteBlankLine();
         pos = lineEnd + (hasNewline ? 1 : 0);
         continue;
       }
-      indentFirstVisualLine = paragraphState.consume(info.kind) && naturalAlignment;
+      const bool paragraphStart = paragraphState.consume(info.kind);
+      if (paragraphGaps) {
+        if (paragraphStart && !outLines.empty()) {
+          // A gap as the page's last row would only push the paragraph off the page; start it on the next one.
+          if (static_cast<int>(outLines.size()) + 1 >= linesPerPage) break;
+          outLines.emplace_back();
+        }
+      } else {
+        indentFirstVisualLine = paragraphStart && naturalAlignment;
+      }
       lineBytePos = info.contentOffset;
     }
 
@@ -901,7 +914,7 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<TxtLine>& ou
       if (indentFirstVisualLine && BidiUtils::startsWithRtl(line + lineBytePos, BidiUtils::RTL_PARAGRAPH_PROBE_DEPTH)) {
         indentFirstVisualLine = false;
       }
-      if (!indentFirstVisualLine && compactParagraphs) {
+      if (!indentFirstVisualLine && !paragraphGaps) {
         lineBytePos = 0;
       }
 
@@ -1054,6 +1067,31 @@ bool TxtReaderActivity::indexDirectPosition() {
   currentPage = static_cast<int>(txt_page_index::pageForOffset(pageOffsets, offset));
   directPageCount = 0;
   return true;
+}
+
+void TxtReaderActivity::catchUpDirectIndex() {
+  if (pageMode != PageMode::Direct || directPageCount == 0 || indexComplete || indexCatchUpFailed) return;
+  // Only on a quiet loop: a page takes ~38 ms at 240 MHz under the render lock,
+  // and this tick's input must not wait behind it.
+  if (RenderLock::peek() || mappedInput.wasAnyPressed() || mappedInput.wasAnyReleased()) return;
+  if (pageOffsets.empty() || pageOffsets.back() >= directPageOffsets[directPageIndex]) return;
+
+  // loadPageAtOffset() shares pageBuffer (and may settle textEncoding) with the
+  // render task. nextPageLines is scratch here: the rolling frame reloads it
+  // before every use, so nothing reads what this leaves in it.
+  RenderLock lock(*this);
+  const size_t from = pageOffsets.back();
+  size_t next = from;
+  if (!loadPageAtOffset(from, nextPageLines, next) || !advancePageIndex(next)) {
+    LOG_ERR("TRS", "Index catch-up stopped at offset %u", static_cast<unsigned>(from));
+    indexCatchUpFailed = true;
+  }
+  const bool done =
+      indexCatchUpFailed || indexComplete || pageOffsets.back() >= directPageOffsets[directPageIndex];
+  if (done && !autoTurnActive) {  // the scratch page is only kept for a running roll
+    nextPageLines.clear();
+    nextPageLines.shrink_to_fit();
+  }
 }
 
 void TxtReaderActivity::goToSourceOffset(const size_t sourceOffset, const int returnPage) {
@@ -1210,16 +1248,17 @@ int TxtReaderActivity::lineStartX(const TxtLine& line) const {
 }
 
 void TxtReaderActivity::drawTextLines(const std::vector<TxtLine>& lines, const size_t from, const size_t to) const {
-  const int lineHeight = renderer.getLineHeight(cachedFontId);
   const int contentWidth = viewportWidth;
   const int contentBottom = renderer.getScreenHeight() - cachedOrientedMarginBottom;
   auto* fcm = renderer.getFontCacheManager();
-  int y = cachedOrientedMarginTop + static_cast<int>(from) * lineHeight;
+  // Body text only: the status bar is drawn after this scope ends.
+  GfxRenderer::SyntheticBoldScope syntheticBold(renderer, SETTINGS.fakeBold, /*body=*/true);
+  int y = cachedOrientedMarginTop + static_cast<int>(from) * lineAdvance;
   for (size_t row = from; row < to && row < lines.size(); ++row) {
     const auto& line = lines[row];
     if (!line.text.empty()) {
       renderer.drawText(cachedFontId, lineStartX(line), y, line.text.c_str());
-      const int guideY = y + lineHeight + SETTINGS.readingGuideLineOffset;
+      const int guideY = y + lineAdvance + SETTINGS.readingGuideLineOffset;
       if (SETTINGS.readingGuideLineEnabled && !fcm->isScanning() &&
           readingGuideLine::fitsVertically(SETTINGS.readingGuideLineStyle, guideY, cachedOrientedMarginTop,
                                            contentBottom)) {
@@ -1227,7 +1266,7 @@ void TxtReaderActivity::drawTextLines(const std::vector<TxtLine>& lines, const s
                                cachedOrientedMarginLeft + contentWidth - 1, SETTINGS.readingGuideLineStyle);
       }
     }
-    y += lineHeight;
+    y += lineAdvance;
   }
 }
 
@@ -1245,13 +1284,12 @@ bool TxtReaderActivity::renderRollingFrame() {
   }
   rollLineCount = static_cast<uint8_t>(std::min<size_t>(nextPageLines.size(), UINT8_MAX));
   const size_t shown = std::min<size_t>(rollStep, nextPageLines.size());
-  const int lineHeight = renderer.getLineHeight(cachedFontId);
 
   renderer.clearScreen();
   drawTextLines(nextPageLines, 0, shown);
   drawTextLines(currentPageLines, shown, currentPageLines.size());
   // Dotted seam between the new and the old text marks where reading resumes.
-  const int seamY = cachedOrientedMarginTop + static_cast<int>(shown) * lineHeight - 1;
+  const int seamY = cachedOrientedMarginTop + static_cast<int>(shown) * lineAdvance - 1;
   for (int x = cachedOrientedMarginLeft; x < cachedOrientedMarginLeft + viewportWidth; x += 4) {
     renderer.drawPixel(x, seamY, true);
     renderer.drawPixel(x + 1, seamY, true);

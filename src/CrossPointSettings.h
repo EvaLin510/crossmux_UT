@@ -17,6 +17,8 @@
 // changes. The default Language index is resolved by defaultLanguageIndex()
 // (declared below, defined in the .cpp where the include is local).
 
+class GfxRenderer;
+
 class CrossPointSettings : public PersistableStore<CrossPointSettings> {
  private:
   // Private constructor for singleton
@@ -258,6 +260,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     TLP_GO_TO_PERCENT = 9,
     TLP_GO_HOME = 10,
     TLP_SYNC = 11,
+    TLP_BACK = 12,  // same as a short Back press
     TOUCH_LONG_PRESS_ACTION_COUNT
   };
   static constexpr int TOUCH_LONG_PRESS_ZONES = 9;
@@ -338,7 +341,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Text rendering settings
   uint8_t extraParagraphSpacing = 0;
   uint8_t textAntiAliasing = 1;
-  uint8_t fakeBold = SYNTHETIC_BOLD_STANDARD;
+  uint8_t fakeBold = SYNTHETIC_BOLD_OFF;
   uint8_t readingGuideLineEnabled = 0;
   uint8_t readingGuideLineStyle = static_cast<uint8_t>(readingGuideLine::Style::ShortDash);
   int8_t readingGuideLineOffset = READING_GUIDE_LINE_OFFSET_DEFAULT;
@@ -374,6 +377,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t paragraphAlignment = JUSTIFIED;
   // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
   uint8_t sleepTimeoutMinutes = 10;
+  // Skip auto-sleep while a computer is on the USB cable (default on); a charger still sleeps.
+  uint8_t stayAwakeOnUsb = 1;
   // E-ink refresh frequency (default 15 pages)
   uint8_t refreshFrequency = REFRESH_15;
   uint8_t hyphenationEnabled = 0;
@@ -416,8 +421,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t fadingFix = 0;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)
   uint8_t embeddedStyle = 1;
-  // Focus Reading - emphasizes the first part of words with bold
-  uint8_t focusReadingEnabled = 0;
   uint8_t readerMenuStyle = READER_MENU_LIST;
   // SD card font family name (empty = use built-in fontFamily)
   char sdFontFamilyName[32] = "";
@@ -552,7 +555,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // viewport is renderer/orientation-derived, so the caller supplies it —
   // passing it in keeps a spec from ever existing in a half-filled state.
   // Unlocked for the same reason as statusBarSpec(); see the note above.
-  ReaderRenderSpec readerRenderSpec(uint16_t viewportWidth, uint16_t viewportHeight) const;
+  // The renderer supplies font metrics for the line-spacing steps.
+  ReaderRenderSpec readerRenderSpec(const GfxRenderer& renderer, uint16_t viewportWidth,
+                                    uint16_t viewportHeight) const;
 
   static const char* getFilePath() { return "/.crosspoint/settings.json"; }
   // Keep the UI language, service region, and regional-app defaults in sync.
@@ -574,9 +579,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
  private:
   bool loadFromBinaryFile();
   bool migrateLanguageBinaryFile();
+  // Per-font line-spacing table; UT37 uses only its Standard entry.
+  float getBaseLineCompression(uint8_t spacing) const;
 
  public:
-  float getReaderLineCompression() const;
+  // Multiplier on the reader font's line height for the line-spacing setting.
+  float getReaderLineCompression(const GfxRenderer& renderer) const;
   unsigned long getSleepTimeoutMs() const;
   int getRefreshFrequency() const;
   // Reading time that makes a day count for streaks and the heatmap. The

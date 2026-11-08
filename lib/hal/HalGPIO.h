@@ -141,6 +141,9 @@ class HalGPIO {
 
   // Check if USB is connected
   bool isUsbConnected() const;
+  // A computer (USB host) on the cable, not just a charger. Boards that cannot
+  // tell the two apart report isUsbConnected().
+  bool isUsbHostConnected() const;
 
   // Whether a cold boot with no USB detected can be trusted to mean a held
   // power button (Xteink-style button-energized rail with reliable USB

@@ -417,7 +417,7 @@ void EpubReaderActivity::openReaderMenu() {
 }
 
 ReaderRenderSpec EpubReaderActivity::effectiveRenderSpec(const uint16_t width, const uint16_t height) const {
-  auto spec = SETTINGS.readerRenderSpec(width, height);
+  auto spec = SETTINGS.readerRenderSpec(renderer, width, height);
   spec.collectTouchLinks = mappedInput.hasTouch();
   if (stylesDisabledForSession_) spec.embeddedStyle = false;
   return spec;
@@ -1025,9 +1025,19 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::TEXT_SETTINGS: {
+      // The margin moves the viewport, which the spec below only sees at the next render.
+      const ReaderRenderSpec specBefore = effectiveRenderSpec(buildViewportWidth, buildViewportHeight);
+      const uint8_t marginBefore = SETTINGS.screenMargin;
       startActivityForResultWith<TextSettingsActivity>(
-          [this](const ActivityResult&) {
+          [this, specBefore, marginBefore](const ActivityResult&) {
             READING_STATS.resumeSession();
+            if (section && SETTINGS.screenMargin == marginBefore &&
+                effectiveRenderSpec(buildViewportWidth, buildViewportHeight) == specBefore) {
+              // Only paint-time settings changed (synthetic bold, anti-aliasing, guide line):
+              // the laid-out section is still valid, so skip the reload/rebuild.
+              reopenMenuAfterCancel();
+              return;
+            }
             {
               RenderLock lock;
               if (section) {
@@ -1172,6 +1182,14 @@ void EpubReaderActivity::runTouchLongPress(const uint8_t action) {
       break;
     case CrossPointSettings::TLP_SYNC:
       onReaderMenuConfirm(MenuAction::SYNC);
+      break;
+    case CrossPointSettings::TLP_BACK:
+      // As a short Back press: leave a followed footnote first, then the book.
+      if (footnoteDepth > 0) {
+        restoreSavedPosition();
+      } else {
+        goBackShort();
+      }
       break;
     case CrossPointSettings::TLP_NONE:
     default:
@@ -1374,11 +1392,11 @@ bool EpubReaderActivity::handleRollingAutoTurn() {
     requestUpdate();
     return true;
   }
-  // Line k of the next page appears at k/n of the interval (n = its lines;
-  // a typical count until the first rolling frame has measured it).
+  // Line k of the next page appears at k/n of the interval, four at a time
+  // (n = its lines; a typical count until the first rolling frame has measured it).
   constexpr uint8_t kAssumedLines = 12;
   const unsigned long lines = rollLineCount > 0 ? rollLineCount : kAssumedLines;
-  const auto want = static_cast<uint8_t>(elapsed * lines / pageTurnDuration);
+  const auto want = auto_page_turn::rollLinesShown(elapsed, pageTurnDuration, lines);
   if (want > rollStep) {
     rollStep = want;
     requestUpdate();
@@ -1401,7 +1419,7 @@ bool EpubReaderActivity::renderRollingFrame(const int marginTop, const int margi
   }
 
   const int fontId = SETTINGS.getReaderFontId();
-  const int lineHeight = renderer.getLineHeight(fontId, SETTINGS.getReaderLineCompression());
+  const int lineHeight = renderer.getLineHeight(fontId, SETTINGS.getReaderLineCompression(renderer));
   const int screenW = renderer.getScreenWidth();
   const int contentBottom = renderer.getScreenHeight() - marginBottom;
   rollLineCount = static_cast<uint8_t>(std::min<size_t>(next->elements.size(), UINT8_MAX));
@@ -1421,7 +1439,7 @@ bool EpubReaderActivity::renderRollingFrame(const int marginTop, const int margi
 
   renderer.clearScreen();
   {
-    GfxRenderer::SyntheticBoldScope syntheticBold(renderer, SETTINGS.fakeBold);
+    GfxRenderer::SyntheticBoldScope syntheticBold(renderer, SETTINGS.fakeBold, /*body=*/true);
     {
       const GfxRenderer::ClipScope clip(renderer, 0, 0, screenW, revealBottom);
       next->render(renderer, fontId, marginLeft, marginTop);
@@ -1973,7 +1991,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto t0 = millis();
   const int fontId = SETTINGS.getReaderFontId();
   const auto renderPage = [&] {
-    GfxRenderer::SyntheticBoldScope syntheticBold(renderer, SETTINGS.fakeBold);
+    GfxRenderer::SyntheticBoldScope syntheticBold(renderer, SETTINGS.fakeBold, /*body=*/true);
     page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
   };
 
@@ -2056,7 +2074,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     const int x1 = orientedMarginLeft;
     const int x2 = renderer.getScreenWidth() - orientedMarginRight - 1;
     const int contentBottom = renderer.getScreenHeight() - orientedMarginBottom;
-    const int baseLineHeight = renderer.getLineHeight(fontId, SETTINGS.getReaderLineCompression());
+    const int baseLineHeight = renderer.getLineHeight(fontId, SETTINGS.getReaderLineCompression(renderer));
     const int ascender = renderer.getFontAscenderSize(fontId);
     for (const auto& element : page->elements) {
       if (element->getTag() != TAG_PageLine) continue;
@@ -2356,7 +2374,7 @@ void EpubReaderActivity::renderStatusBar() const {
 
 namespace {
 constexpr StrId kTextRowNames[] = {StrId::STR_FONT, StrId::STR_FONT_SIZE, StrId::STR_LINE_SPACING,
-                                   StrId::STR_PARA_ALIGNMENT, StrId::STR_FOCUS_READING};
+                                   StrId::STR_PARA_ALIGNMENT};
 constexpr StrId kSpacingIds[] = {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE, StrId::STR_EXTRA_WIDE};
 constexpr StrId kAlignIds[] = {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
                                StrId::STR_BOOK_S_STYLE};

@@ -12,7 +12,8 @@ constexpr uint8_t LEGACY_CACHE_VERSION = 4;
 constexpr uint8_t LAZY_CACHE_VERSION = 5;
 constexpr uint8_t ENCODING_CACHE_VERSION = 6;
 constexpr uint8_t PARAGRAPH_LAYOUT_CACHE_VERSION = 7;
-constexpr uint8_t CACHE_VERSION = PARAGRAPH_LAYOUT_CACHE_VERSION;
+constexpr uint8_t PARAGRAPH_GAP_CACHE_VERSION = 8;
+constexpr uint8_t CACHE_VERSION = PARAGRAPH_GAP_CACHE_VERSION;
 constexpr size_t CHECKPOINT_PAGE_COUNT = 32;
 
 enum class AdvanceResult : uint8_t { Unchanged, PageAdded, Completed };
@@ -27,6 +28,8 @@ inline bool canReuseCacheVersion(const uint8_t version, const bool confirmedUtf8
 
 inline bool canReuseParagraphLayout(const uint8_t version, const bool extraParagraphSpacing,
                                     const bool cachedExtraParagraphSpacing) {
+  // Before v8 the spacing-on layout kept source lines verbatim; v8 inserts a gap row between paragraphs.
+  if (extraParagraphSpacing && version < PARAGRAPH_GAP_CACHE_VERSION) return false;
   return version < PARAGRAPH_LAYOUT_CACHE_VERSION ? extraParagraphSpacing
                                                   : cachedExtraParagraphSpacing == extraParagraphSpacing;
 }

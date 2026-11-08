@@ -36,8 +36,7 @@ constexpr StrId TAB_NAME_IDS[] = {StrId::STR_FONT, StrId::STR_SIZE, StrId::STR_L
 
 constexpr StrId LAYOUT_ROW_NAME_IDS[] = {StrId::STR_LINE_SPACING, StrId::STR_EXTRA_SPACING, StrId::STR_ALIGNMENT,
                                          StrId::STR_SCREEN_MARGIN};
-constexpr StrId STYLE_ROW_NAME_IDS[] = {StrId::STR_FOCUS_READING,
-                                        StrId::STR_READING_GUIDE_LINE,
+constexpr StrId STYLE_ROW_NAME_IDS[] = {StrId::STR_READING_GUIDE_LINE,
                                         StrId::STR_READING_GUIDE_LINE_STYLE,
                                         StrId::STR_READING_GUIDE_LINE_OFFSET,
                                         StrId::STR_HYPHENATION,
@@ -637,9 +636,6 @@ std::string TextSettingsActivity::layoutValueText(int row) const {
 
 void TextSettingsActivity::confirmStyleRow(int row) {
   switch (styleRowAt(row)) {
-    case StyleRow::FocusReading:
-      SETTINGS.focusReadingEnabled = !SETTINGS.focusReadingEnabled;
-      break;
     case StyleRow::ReadingGuideLine:
       SETTINGS.readingGuideLineEnabled = !SETTINGS.readingGuideLineEnabled;
       rebuildRowItems();
@@ -696,8 +692,6 @@ void TextSettingsActivity::confirmStyleRow(int row) {
 
 std::string TextSettingsActivity::styleValueText(int row) const {
   switch (styleRowAt(row)) {
-    case StyleRow::FocusReading:
-      return SETTINGS.focusReadingEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
     case StyleRow::ReadingGuideLine:
       return SETTINGS.readingGuideLineEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
     case StyleRow::ReadingGuideLineStyle: {

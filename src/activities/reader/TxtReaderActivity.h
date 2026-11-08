@@ -41,6 +41,8 @@ class TxtReaderActivity final : public ReaderActivity {
   PageMode pageMode = PageMode::Indexed;
   std::vector<TxtLine> currentPageLines;
   int linesPerPage = 0;
+  // Row pitch: font line height scaled by the line-spacing setting.
+  int lineAdvance = 1;
   int viewportWidth = 0;
   bool initialized = false;
   bool indexComplete = false;
@@ -58,6 +60,9 @@ class TxtReaderActivity final : public ReaderActivity {
   uint8_t rollStep = 0;
   uint8_t rollLineCount = 0;
   bool rollSupported = true;
+  // Set when the idle index catch-up cannot lay out a page, so it stops
+  // re-reading the card every loop; indexDirectPosition() still retries.
+  bool indexCatchUpFailed = false;
   size_t currentPageEndOffset = 0;
 #ifdef ENABLE_CHINESE_VERSION
   txt_encoding::Encoding textEncoding = txt_encoding::Encoding::Unknown;
@@ -112,6 +117,9 @@ class TxtReaderActivity final : public ReaderActivity {
   // start, laying out the index up to it first. False (still Direct) if the
   // index cannot reach it.
   bool indexDirectPosition();
+  // While Direct mode reads ahead of the index, lay out one more index page on
+  // an idle loop, so indexDirectPosition() never has a long gap left to close.
+  void catchUpDirectIndex();
   void goToSourceOffset(size_t sourceOffset, int returnPage);
   size_t getCurrentSourceOffset() const;
   int getDisplayPageNumber() const;

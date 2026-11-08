@@ -115,7 +115,8 @@ void ActivityManager::loop() {
 
   if (currentActivity && pendingAction.load() == PendingAction::None) {
     if (handleMainTabInput()) return;
-    if (!currentActivity->isHomeActivity() && mappedInput.wasHomeGesture()) {
+    if (!currentActivity->isHomeActivity() && currentActivity->name.rfind("WeRead", 0) != 0 &&
+        mappedInput.wasHomeGesture()) {
       if (currentActivity->handleHomeGesture()) {
         return;
       }
@@ -334,8 +335,15 @@ bool ActivityManager::handleMainTabInput() {
     case MainTabFocus::Content:
       if (!currentActivity->mainTabBackReturnsToTabs()) return false;
       if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+        // Back on another tab's main page goes straight home (one press, not
+        // a stop on the tab bar first); Recent itself still focuses the bar.
+        const MainTab target = MainTabs::backTarget(currentTab);
         mainTabFocus = MainTabFocus::Tabs;
-        requestUpdate();
+        if (target != MainTab::None) {
+          goToMainTab(target);
+        } else {
+          requestUpdate();
+        }
         return true;
       }
       return mappedInput.isPressed(MappedInputManager::Button::Back);
@@ -442,9 +450,19 @@ void ActivityManager::goToReader(std::string path, const bool allowFastInitialRe
 }
 
 void ActivityManager::goToSleep(bool fromTimeout) {
-  if (replaceActivityWith<SleepActivity>(fromTimeout)) {
-    loop();  // The caller sleeps immediately after this returns, so render now.
+  if (!replaceActivityWith<SleepActivity>(fromTimeout)) return;
+  // The caller powers the display and SD down right after this returns, so the
+  // switch must land now. loop() defers it while the render task holds the
+  // lock (an auto-turn frame in flight); returning then would tear the hardware
+  // down under that render and hang. SleepActivity draws from onEnter().
+  constexpr unsigned long SLEEP_SWITCH_TIMEOUT_MS = 5000;
+  const unsigned long start = millis();
+  loop();
+  while (isSwitchPending() && millis() - start < SLEEP_SWITCH_TIMEOUT_MS) {
+    delay(5);
+    loop();
   }
+  if (isSwitchPending()) LOG_ERR("ACT", "Sleep screen switch still pending after %lu ms", SLEEP_SWITCH_TIMEOUT_MS);
 }
 
 void ActivityManager::goToBoot() { replaceActivityWith<BootActivity>(); }

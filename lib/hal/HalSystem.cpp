@@ -2,6 +2,8 @@
 
 #include <BoardConfig.h>
 
+#include <cstdio>
+#include <ctime>
 #include <string>
 
 #include "Arduino.h"
@@ -23,6 +25,15 @@ RTC_NOINIT_ATTR HalSystem::StackFrame panicStack[MAX_PANIC_STACK_DEPTH];
 // RTC_NOINIT is uninitialized on cold boot, so only this exact marker proves a
 // panic diagnostic was captured before the reset.
 RTC_NOINIT_ATTR volatile uint32_t panicCaptureMarker;
+
+// What the device was doing when it reset. Uninitialized on cold boot, so the
+// values count only while crashContextMarker holds its magic.
+#define CRASH_CONTEXT_MAGIC 0x43525858u
+RTC_NOINIT_ATTR uint32_t crashContextMarker;
+RTC_NOINIT_ATTR uint32_t crashCpuMhz;
+RTC_NOINIT_ATTR uint32_t crashLightSleep;
+RTC_NOINIT_ATTR int32_t crashUtcOffsetSeconds;
+RTC_NOINIT_ATTR uint32_t crashUtcOffsetKnown;
 
 extern "C" {
 
@@ -87,7 +98,66 @@ void IRAM_ATTR __wrap_panic_print_backtrace(const void* frame, int core) {
 
 namespace HalSystem {
 
+namespace {
+// begin() snapshot of the previous run; later note*() calls overwrite the RTC copy.
+struct PreviousRunContext {
+  bool valid = false;
+  uint32_t cpuMhz = 0;
+  bool lightSleep = false;
+  bool utcOffsetKnown = false;
+  int32_t utcOffsetSeconds = 0;
+};
+PreviousRunContext previousRun;
+esp_reset_reason_t bootResetReason = ESP_RST_UNKNOWN;
+
+const char* resetReasonName(const esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON:
+      return "POWERON (power-on)";
+    case ESP_RST_EXT:
+      return "EXT (external pin)";
+    case ESP_RST_SW:
+      return "SW (esp_restart)";
+    case ESP_RST_PANIC:
+      return "PANIC (exception or abort)";
+    case ESP_RST_INT_WDT:
+      return "INT_WDT (interrupt watchdog)";
+    case ESP_RST_TASK_WDT:
+      return "TASK_WDT (task watchdog)";
+    case ESP_RST_WDT:
+      return "WDT (other watchdog)";
+    case ESP_RST_DEEPSLEEP:
+      return "DEEPSLEEP (deep-sleep wake)";
+    case ESP_RST_BROWNOUT:
+      return "BROWNOUT (supply voltage drop)";
+    case ESP_RST_SDIO:
+      return "SDIO";
+    case ESP_RST_CPU_LOCKUP:
+      return "CPU_LOCKUP (CPU locked up, no handler ran)";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+// Wall clock is trusted only after 2024-01-01 (the RTC/NTP has set it).
+constexpr time_t MIN_VALID_EPOCH = 1704067200;
+}  // namespace
+
 void begin() {
+  bootResetReason = esp_reset_reason();
+  if (crashContextMarker == CRASH_CONTEXT_MAGIC) {
+    previousRun.valid = true;
+    previousRun.cpuMhz = crashCpuMhz;
+    previousRun.lightSleep = crashLightSleep != 0;
+    previousRun.utcOffsetKnown = crashUtcOffsetKnown != 0;
+    previousRun.utcOffsetSeconds = crashUtcOffsetSeconds;
+  } else {
+    crashUtcOffsetKnown = 0;
+  }
+  crashCpuMhz = getCpuFrequencyMhz();
+  crashLightSleep = 0;
+  crashContextMarker = CRASH_CONTEXT_MAGIC;
+
   // On a panic reboot, preserve diagnostics until checkPanic() has tried to write them to the SD card.
   // Ordinary boots clear any stale retained diagnostics.
   if (!isRebootFromPanic()) {
@@ -201,6 +271,35 @@ std::string getPanicInfo(bool full) {
     std::string info;
 
     info += "CrossPoint version: " CROSSPOINT_VERSION;
+    info += "\n\nReset reason: ";
+    info += resetReasonName(bootResetReason);
+
+    // The device restarts straight after the fault, so now minus uptime is the
+    // crash time to within the boot duration (about a second).
+    info += "\nCrash time (approx.): ";
+    const time_t now = time(nullptr);
+    if (now >= MIN_VALID_EPOCH) {
+      const int32_t offset = previousRun.utcOffsetKnown ? previousRun.utcOffsetSeconds : 0;
+      const time_t crashLocal = now - static_cast<time_t>(getUptimeSeconds()) + offset;
+      std::tm crashTm{};
+      char timeText[48];
+      if (gmtime_r(&crashLocal, &crashTm)) {
+        const int32_t offsetMinutes = (offset < 0 ? -offset : offset) / 60;
+        snprintf(timeText, sizeof(timeText), "%04d-%02d-%02d %02d:%02d:%02d UTC%c%02d:%02d", crashTm.tm_year + 1900,
+                 crashTm.tm_mon + 1, crashTm.tm_mday, crashTm.tm_hour, crashTm.tm_min, crashTm.tm_sec,
+                 offset < 0 ? '-' : '+', static_cast<int>(offsetMinutes / 60), static_cast<int>(offsetMinutes % 60));
+        info += timeText;
+      } else {
+        info += "unknown";
+      }
+    } else {
+      info += "unknown (clock not set)";
+    }
+
+    info += "\nCPU frequency at crash: ";
+    info += previousRun.valid ? std::to_string(previousRun.cpuMhz) + " MHz" : "unknown";
+    info += "\nIn light sleep at crash: ";
+    info += previousRun.valid ? (previousRun.lightSleep ? "yes" : "no") : "unknown";
     info += "\n\nPanic reason: " + std::string(panicMessage);
     info += "\n\nLast logs:\n" + getLastLogs();
     info += "\n\nStack memory:\n";
@@ -223,6 +322,15 @@ std::string getPanicInfo(bool full) {
 
     return info;
   }
+}
+
+void noteCpuFrequency(const uint32_t mhz) { crashCpuMhz = mhz; }
+
+void noteLightSleep(const bool asleep) { crashLightSleep = asleep ? 1 : 0; }
+
+void rememberUtcOffsetSeconds(const int32_t offsetSeconds) {
+  crashUtcOffsetSeconds = offsetSeconds;
+  crashUtcOffsetKnown = 1;
 }
 
 bool isRebootFromPanic() {

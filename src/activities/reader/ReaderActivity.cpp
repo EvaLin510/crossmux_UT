@@ -85,6 +85,14 @@ bool ReaderActivity::handleBackNavigation() {
                                            {this, [](void* ctx) { static_cast<ReaderActivity*>(ctx)->onGoHome(); }});
 }
 
+void ReaderActivity::goBackShort() {
+  if (SETTINGS.backShortToFileBrowser) {
+    activityManager.goToFileBrowser(bookPath.c_str());
+  } else {
+    onGoHome();
+  }
+}
+
 void ReaderActivity::clearEndOfBookOptionsIfNeeded() {
   if (isAtEndOfBook() || !endOfBookOptionsReady.load(std::memory_order_acquire)) return;
 

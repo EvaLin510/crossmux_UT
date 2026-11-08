@@ -24,10 +24,10 @@ constexpr unsigned long SKIP_HOLD_MS = 700;
 constexpr unsigned long BOOKMARK_HOLD_MS = 400;
 constexpr unsigned long BOOKMARK_MESSAGE_DURATION_MS = 2500;
 
-// UT37 auto page turn badge: "Auto-scroll" at the bottom-left of the status
-// lane while auto turn runs; tapping it stops auto turn. Drawing and
-// hit-testing share this one rect.
-inline Rect autoScrollLabelRect(const GfxRenderer& renderer) {
+// UT37 mode badge at the bottom-left of the status lane: "Auto-scroll" while
+// auto turn runs, "Dictionary" while picking a word; tapping it leaves that
+// mode. Drawing and hit-testing share this one rect.
+inline Rect modeLabelRect(const GfxRenderer& renderer, const char* label) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   int top = 0;
   int right = 0;
@@ -41,24 +41,31 @@ inline Rect autoScrollLabelRect(const GfxRenderer& renderer) {
   const int y = renderer.getScreenHeight() - UITheme::getInstance().getStatusBarHeight() - bottom - 4;
 #endif
   const int x = metrics.statusBarHorizontalMargin + left + 1;
-  return Rect{x, y, renderer.getTextWidth(SMALL_FONT_ID, tr(STR_AUTO_SCROLL)), renderer.getLineHeight(SMALL_FONT_ID)};
+  return Rect{x, y, renderer.getTextWidth(SMALL_FONT_ID, label), renderer.getLineHeight(SMALL_FONT_ID)};
 }
 
-inline void drawAutoScrollLabel(const GfxRenderer& renderer) {
-  const Rect rect = autoScrollLabelRect(renderer);
-  renderer.drawText(SMALL_FONT_ID, rect.x, rect.y, tr(STR_AUTO_SCROLL));
+inline void drawModeLabel(const GfxRenderer& renderer, const char* label) {
+  const Rect rect = modeLabelRect(renderer, label);
+  renderer.drawText(SMALL_FONT_ID, rect.x, rect.y, label);
 }
+
+// Hit test for an already-read tap point.
+inline bool isModeLabelHit(const GfxRenderer& renderer, const char* label, const int x, const int y) {
+  const Rect rect = modeLabelRect(renderer, label);
+  // Grow the small text to a finger-sized target, down to the screen edge.
+  constexpr int kSlop = 12;
+  return x >= rect.x - kSlop && x < rect.x + rect.width + kSlop && y >= rect.y - kSlop &&
+         y < renderer.getScreenHeight();
+}
+
+inline void drawAutoScrollLabel(const GfxRenderer& renderer) { drawModeLabel(renderer, tr(STR_AUTO_SCROLL)); }
 
 inline bool wasAutoScrollLabelTapped(const GfxRenderer& renderer, const MappedInputManager& input) {
   if (!input.hasTouch()) return false;
   int x = 0;
   int y = 0;
   if (!input.wasScreenTapped(x, y)) return false;
-  const Rect rect = autoScrollLabelRect(renderer);
-  // Grow the small text to a finger-sized target, down to the screen edge.
-  constexpr int kSlop = 12;
-  return x >= rect.x - kSlop && x < rect.x + rect.width + kSlop && y >= rect.y - kSlop &&
-         y < renderer.getScreenHeight();
+  return isModeLabelHit(renderer, tr(STR_AUTO_SCROLL), x, y);
 }
 
 enum ReaderTouchAction : freeink::ui::ActionId {

@@ -406,7 +406,8 @@ bool MappedInputManager::wasEdgeSwipe(const freeink::ui::ScreenEdge edge, const 
   int ey = 0;
   if (!decodeSwipe(sx, sy, ex, ey)) return false;
   const bool hit =
-      fui::edgeSwipe(edge, sx, sy, ex, ey, renderer.getScreenWidth(), renderer.getScreenHeight(), edgeFrac);
+      fui::edgeSwipe(edge, sx, sy, ex, ey, renderer.getScreenWidth(), renderer.getScreenHeight(), edgeFrac,
+      (edge == fui::ScreenEdge::Top) ? 44.0f / static_cast<float>(renderer.getScreenHeight()) : -1.0f);  // UT37 status-bar band
   if (hit) rememberTouchHeldTime();
   return hit;
 }

@@ -1,7 +1,9 @@
 #include "CrossPointSettings.h"
 
 #include <BoardConfig.h>
+#include <GfxRenderer.h>
 #include <HalStorage.h>
+#include <HalSystem.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <ObfuscationUtils.h>
@@ -566,6 +568,11 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     requestResave();
   }
 
+  // A later crash report converts its crash time with this offset.
+  int clockOffsetQ = clockUtcOffsetQ;
+  if (clockOffsetQ > 104) clockOffsetQ = 48;  // same fallback as TimeUtils
+  HalSystem::rememberUtcOffsetSeconds((clockOffsetQ - 48) * 15 * 60);
+
   LOG_DBG("CPS", "Settings loaded from file");
 
   return true;
@@ -736,11 +743,11 @@ CrossPointSettings::StatusBarSpec CrossPointSettings::statusBarSpec() const {
   return spec;
 }
 
-ReaderRenderSpec CrossPointSettings::readerRenderSpec(const uint16_t viewportWidth,
+ReaderRenderSpec CrossPointSettings::readerRenderSpec(const GfxRenderer& renderer, const uint16_t viewportWidth,
                                                       const uint16_t viewportHeight) const {
   ReaderRenderSpec spec;
   spec.fontId = getReaderFontId();
-  spec.lineCompression = getReaderLineCompression();
+  spec.lineCompression = getReaderLineCompression(renderer);
   spec.extraParagraphSpacing = extraParagraphSpacing != 0;
   spec.paragraphAlignment = paragraphAlignment;
   spec.viewportWidth = viewportWidth;
@@ -748,14 +755,50 @@ ReaderRenderSpec CrossPointSettings::readerRenderSpec(const uint16_t viewportWid
   spec.hyphenationEnabled = hyphenationEnabled != 0;
   spec.embeddedStyle = embeddedStyle != 0;
   spec.imageRendering = imageRendering;
-  spec.focusReadingEnabled = focusReadingEnabled != 0;
   return spec;
 }
 
-float CrossPointSettings::getReaderLineCompression() const {
+float CrossPointSettings::getReaderLineCompression(const GfxRenderer& renderer) const {
+#if FREEINK_DEVICE_UT37
+  // Standard keeps the font's own spacing. The generic tables move the other
+  // steps by 5% of the font's line height, about 1 px at UT37 CJK sizes, so
+  // here they move by a fraction of the font size (em) instead: the same
+  // visual step for every font and size, small or large.
+  const float standard = getBaseLineCompression(NORMAL);
+  float stepEm = 0.0f;
+  switch (lineSpacing) {
+    case TIGHT:
+      stepEm = -0.15f;
+      break;
+    case WIDE:
+      stepEm = 0.25f;
+      break;
+    case EXTRA_WIDE:
+      stepEm = 0.5f;
+      break;
+    case NORMAL:
+    default:
+      return standard;
+  }
+  const int fontId = getReaderFontId();
+  const int lineHeight = renderer.getLineHeight(fontId);
+  if (lineHeight <= 0) return standard;
+  // An ideograph is square, so its advance is the em; Latin-only fonts fall back to the ascender.
+  int em = renderer.getTextAdvanceX(fontId, "\xe6\x88\x91", EpdFontFamily::REGULAR);  // U+6211
+  if (em <= 0) em = renderer.getTextHeight(fontId);
+  if (em <= 0) return standard;
+  // Tight never packs rows closer than the glyph cell plus one pixel.
+  const float pitch = std::max(lineHeight * standard + stepEm * static_cast<float>(em), static_cast<float>(em + 1));
+  return pitch / static_cast<float>(lineHeight);
+#else
+  return getBaseLineCompression(lineSpacing);
+#endif
+}
+
+float CrossPointSettings::getBaseLineCompression(const uint8_t spacing) const {
   // SD card fonts use same compression as Bookerly (the most neutral values)
   if (sdFontFamilyName[0] != '\0') {
-    switch (lineSpacing) {
+    switch (spacing) {
       case TIGHT:
         return 0.95f;
       case NORMAL:
@@ -771,7 +814,7 @@ float CrossPointSettings::getReaderLineCompression() const {
   switch (fontFamily) {
     case NOTOSERIF:
     default:
-      switch (lineSpacing) {
+      switch (spacing) {
         case TIGHT:
           return 0.95f;
         case NORMAL:
@@ -783,7 +826,7 @@ float CrossPointSettings::getReaderLineCompression() const {
           return 1.2f;
       }
     case NOTOSANS:
-      switch (lineSpacing) {
+      switch (spacing) {
         case TIGHT:
           return 0.90f;
         case NORMAL:

@@ -12,6 +12,7 @@
 
 #include "CrossPointSettings.h"
 #include "DictionaryDefinitionActivity.h"
+#include "ReaderUtils.h"
 #include "components/UITheme.h"
 
 namespace {
@@ -246,12 +247,22 @@ void DictionaryWordSelectActivity::loop() {
     return;
   }
 
+  int tx = 0;
+  int ty = 0;
+#if FREEINK_DEVICE_UT37
+  // The bottom-left "Dictionary" badge leaves word selection, like the
+  // auto-scroll badge stops auto turn. Checked before the word hit test.
+  if (mappedInput.hasTouch() && mappedInput.wasScreenTapped(tx, ty) &&
+      ReaderUtils::isModeLabelHit(renderer, tr(STR_DICTIONARY_MODE), tx, ty)) {
+    finish();
+    return;
+  }
+#endif
+
   if (words.empty()) return;
 
   // Touch: a tap on a word selects and looks it up in one go. Touch-down only
   // claims the contact; highlighting it first would cost one more refresh.
-  int tx = 0;
-  int ty = 0;
   if (mappedInput.wasScreenTouchDown(tx, ty)) return;
   if (mappedInput.wasScreenTapped(tx, ty)) {
     const int hit = wordAt(tx, ty);
@@ -326,6 +337,9 @@ bool DictionaryWordSelectActivity::drawHighlightWithSnapshot() {
 // hint's screen area. No side-button hints: the full-bleed reader page has no
 // spare gutter for them, so a hint box there would hide text.
 void DictionaryWordSelectActivity::drawHints() const {
+#if FREEINK_DEVICE_UT37
+  ReaderUtils::drawModeLabel(renderer, tr(STR_DICTIONARY_MODE));
+#endif
   // No selectable word on this page: Confirm and navigation are all no-ops
   // (guarded by words.empty() in loop()/performLookup), so only Back does
   // anything and only Back is hinted.
