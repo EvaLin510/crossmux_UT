@@ -58,6 +58,12 @@ jobs:
           git describe --tags --always || true
           awk '/^\[crosspoint\]/{f=1;next} f&&/^version/{print "crosspoint.version =", $3;exit}' platformio.ini
           git -C freeink-sdk rev-parse HEAD
+      - name: Use UT37 SDK fork
+        run: |
+          git -C freeink-sdk remote add ut https://github.com/EvaLin510/freeink-sdk.git
+          git -C freeink-sdk fetch --depth 50 ut codex/ut37-bringup
+          git -C freeink-sdk checkout -f FETCH_HEAD
+          git -C freeink-sdk rev-parse HEAD
       - name: Apply UT37 board port
         run: python3 ut37/apply_ut37.py
       - name: Build ut37
