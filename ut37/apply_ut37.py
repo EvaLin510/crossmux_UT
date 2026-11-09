@@ -40,8 +40,7 @@ edit("src/network/FirmwareBoardTag.cpp", tag)
 PROFILE = '''
 // --- UT37 (3.7" 240x416 UC8253, ESP32-S3R8) ---------------------------------
 // Pins from SCH_Schematic1_1_2026-08-30. GPIO33-37 belong to the octal PSRAM;
-// GPIO19/20 are native USB. Touch is disabled until the controller is confirmed
-// on hardware (I2C scan on GPIO12/13, INT on GPIO21).
+// GPIO19/20 are native USB.
 constexpr BoardProfile UT37 = {
     Board::Ut37,
     "ut37",
@@ -50,17 +49,28 @@ constexpr BoardProfile UT37 = {
     416,  // landscape framebuffer, same convention as the Murphy M3 driver
     240,
     {4, 5, 3, 2, 0, 1, PIN_UNASSIGNED},  // sclk, mosi, cs, dc, rst, busy
-    0,
+    // 16 MHz: X3 runs the same UC8253 at 16-20 MHz (datasheet max 20 MHz); the
+    // Murphy driver's 4 MHz default made each 2x12.5 KB plane transfer ~50 ms.
+    16000000,
     // GPIO42 (TOUCH_WAKE/SD_WAKE) -> R4 -> Q1 gate: Q1 grounds the SD card (SD_GND). Active-HIGH.
     {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, 42, false, 0, true},
     // back, confirm, left, right, up, down, power, powerActiveHigh
-    // SIDEKEY=GPIO17 (RTC, wakes from deep sleep) -> power; SIDEKEY1=GPIO46 -> up/function.
-    {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, 46, PIN_UNASSIGNED, 17, false},
+    // SIDEKEY=GPIO17 (RTC, wakes from deep sleep) -> power. SW2 switches it to VCC_3V3 with
+    // R99 100k to GND, so it is ACTIVE-HIGH. SIDEKEY1 (GPIO46) is a net label with no switch
+    // on the schematic (one key was removed in rev 2.0), so it stays unassigned.
+    {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, 17, true},
     14,              // batteryAdc (ADC2_CH3): 330k/100k divider
     PIN_UNASSIGNED,  // charger STAT only drives LED2
     4.3f,            // (330k+100k)/100k
     PIN_UNASSIGNED,
-    NO_TOUCH,
+    // FocalTech FT6336U (chip id 0xA3=0x64) strapped to I2C 0x40, on GPIO13/12 with
+    // INT on GPIO21 (low pulses while touched). GPIO42 (TOUCH_WAKE/SD_WAKE) is its
+    // reset/wake line and also gates SD power, so it is driven HIGH, never pulsed.
+    // Raw frames are portrait panel pixels (x 0..239, y 0..415, origin top-left with
+    // USB at the bottom); swap + flipY maps them onto the 416x240 landscape panel
+    // frame that GfxRenderer rotates back to portrait.
+    {TouchController::Ft5x06, 13, 12, 21, PIN_UNASSIGNED, 0x40, 0, 415, 0, 239, false, 0, true, false, 42, true,
+     false, true, false, true},
     {45, 25000, 10, true},  // LED_PWM
     {AudioOutput::None, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, true,
      PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, 0, 18},  // GPIO18 PA_EN/BUZZER (electromagnetic)
@@ -198,12 +208,14 @@ def gpio_ut37(s):
     anchor = "bool HalGPIO::isUsbConnected() const {\n"
     need(s, anchor, "HalGPIO.cpp isUsbConnected")
     s = s.replace(anchor, UT37_POWER.lstrip("\n") + anchor, 1)
+    # return at the very top of isUsbConnected(): UT37 never reaches battery.isCharging()
     s = s.replace(anchor, anchor + "#if FREEINK_DEVICE_UT37\n  return ut37ExternalPower();\n#endif\n", 1)
     return s
 edit("lib/hal/HalGPIO.cpp", gpio_ut37)
 
-# 7) Pull-down from status bar band only
-import re
+# 7) Pull-down (light panel) gesture must start in the status bar only (44 px strip),
+#    not the SDK default top 14% band: a tap on the reader's first text line was read as a
+#    pull-down, opening the panel and losing the word tap.
 def mim_ut37(s):
     if "UT37 status-bar band" in s:
         return s
@@ -217,7 +229,7 @@ def mim_ut37(s):
     return s[:m.start()] + new + s[m.end():]
 edit("src/MappedInputManager.cpp", mim_ut37)
 
-# 8) WeRead: drop bottom-edge swipe-up -> home/back
+# 8) WeRead (all "WeRead*" activities): drop the global bottom-edge swipe-up -> home/back.
 def weread_home_ut37(s):
     if 'name.rfind("WeRead", 0) != 0' in s:
         return s
