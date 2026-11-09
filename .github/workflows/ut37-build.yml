@@ -39,7 +39,7 @@ jobs:
         working-directory: .
         run: |
           mkdir -p work/ut37 work/scripts
-          cp ut37src/ut37/* work/ut37/
+          cp -r ut37src/ut37/. work/ut37/
           cp ut37src/scripts/make_flasher_html.py work/scripts/
       - uses: actions/setup-python@v5
         with:
